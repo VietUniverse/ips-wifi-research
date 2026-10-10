@@ -1,0 +1,10 @@
+{
+  "model": "bsrbf_kan",
+  "buildings": [0, 1, 2],
+  "seed": 42,
+  "batch_size": 64,
+  "stage1_epochs": 30,
+  "stage2_epochs": 80,
+  "patience": 15,
+  "with_mixer": false
+}

@@ -1,0 +1,10 @@
+{
+  "model": "mlp",
+  "buildings": [1, 2],
+  "seed": 42,
+  "batch_size": 64,
+  "stage1_epochs": 0,
+  "stage2_epochs": 2,
+  "patience": 2,
+  "with_mixer": false
+}
