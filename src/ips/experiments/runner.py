@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import random
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +25,8 @@ from ips.data.uji import load_csvs, make_building_data
 @dataclass
 class RunConfig:
     model: str = "bsrbf_kan"
+    preprocess: str = "rss_standard"
+    preprocess_params: dict = field(default_factory=dict)
     buildings: tuple[int, ...] = (0, 1, 2)
     seed: int = 42
     val_size: float = 0.15
@@ -200,7 +202,10 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
     (output / "config.json").write_text(json.dumps(asdict(config), indent=2), encoding="utf-8")
     rows, preds = [], []
     for building in config.buildings:
-        data = make_building_data(train, test, building, config.val_size, config.seed)
+        data = make_building_data(train, test, building, config.val_size, config.seed,
+                                  config.preprocess, config.preprocess_params)
+        if config.with_mixer and data.x_train.shape[1] != 520:
+            raise ValueError("Residual Mixer currently requires 520 AP features; choose rss_standard")
         folder = output / f"building_{building}"
         folder.mkdir()
         pd.DataFrame({"source_row": np.r_[data.train_rows, data.val_rows],
@@ -228,13 +233,16 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
                                         "stage2")
         history += h
         base_pred = scaler.inverse_transform(_predict(model, data.x_test, device).astype(np.float64))
-        result = {"building": building, "model": config.model, "best_val_m": best_val,
+        result = {"building": building, "model": config.model, "preprocess": config.preprocess,
+                  "n_features": len(data.feature_columns), "best_val_m": best_val,
                   "best_epoch": epoch, "test_mean_m": mean_error(data.y_test, base_pred)}
         chosen_pred = base_pred
         checkpoint = {"model": config.model, "building": building,
+                      "preprocess": config.preprocess, "preprocess_params": config.preprocess_params,
                       "state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
                       "scaler_mean": scaler.mean_, "scaler_scale": scaler.scale_,
-                      "ap_columns": [f"WAP{i:03d}" for i in range(1, 521)]}
+                      "ap_columns": data.feature_columns,
+                      "preprocess_state": data.preprocess_state}
         if config.with_mixer:
             chosen_pred, mixed = _fit_mixer(model, data, scaler, config, device)
             result.update({"mixer_val_m": mixed["best_val_m"], "alpha": mixed["alpha"],

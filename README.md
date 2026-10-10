@@ -6,8 +6,8 @@ Mã thí nghiệm UJIIndoorLoc cho MLP, BSRBF-KAN và BSRBF-KAN + residual KAN-M
 
 1. Mở `notebooks/Colab_Train_UJI.ipynb` trên Colab và chọn GPU ở **Runtime → Change runtime type**.
 2. Vì repo là private, thêm một GitHub token có quyền đọc repo vào Colab Secrets với tên `GITHUB_TOKEN`, hoặc tải ZIP của repo từ GitHub rồi upload ở ô đầu notebook. Không ghi token vào notebook, Git commit hay output.
-3. Chạy các ô theo thứ tự. Notebook tải UJIIndoorLoc từ UCI vào `/content/data/uji` nếu chưa có `trainingData.csv` và `validationData.csv`.
-4. Chọn một trong `configs/mlp_smoke.json`, `configs/bsrbf_baseline.json`, `configs/bsrbf_residual_mixer.json`. Smoke chạy nhanh để kiểm tra đường dữ liệu; BSRBF-KAN đầy đủ có thể mất nhiều giờ.
+3. Đặt `BRANCH` ở ô đầu thành nhánh muốn thử, rồi chạy các ô theo thứ tự. Notebook tải UJIIndoorLoc từ UCI vào `/content/data/uji` nếu chưa có CSV.
+4. Dropdown tự đọc model và bộ tiền xử lý trong nhánh. Chọn preset, model và RSS. Smoke chạy nhanh để kiểm tra đường dữ liệu; BSRBF-KAN đầy đủ có thể mất nhiều giờ.
 5. Tải ZIP kết quả từ `/content/runs`. Repo không lưu CSV gốc hoặc checkpoint.
 
 Colab dùng cùng entry point với máy local:
@@ -15,9 +15,28 @@ Colab dùng cùng entry point với máy local:
 ```powershell
 python -m pip install -e .
 ips-train --config configs/mlp_smoke.json --data-dir D:\LAB\DoAnCoSo_2026\colab --output-dir runs\smoke
+ips-train --list-options
 ```
 
 `--output-dir` phải mới hoặc rỗng. Các file chính trong mỗi run: `config.json`, `building_N/split.csv`, `building_N/history.csv`, `building_N/predictions.csv`, `building_N/checkpoint.pt`, `by_building.csv` và `summary.json`.
+
+## Thêm model hoặc cách xử lý RSS
+
+Thêm **một file `.py`** dưới `src/ips/algorithms/` với `MODEL_NAME` duy nhất và hàm `build_model(input_dim)` trả về `torch.nn.Module` có đầu ra `[batch, 2]` là tọa độ chuẩn hóa. Ví dụ:
+
+```python
+# src/ips/algorithms/my_model.py
+import torch
+MODEL_NAME = "my_model"
+
+def build_model(input_dim):
+    return torch.nn.Sequential(torch.nn.Linear(input_dim, 128),
+                               torch.nn.ReLU(), torch.nn.Linear(128, 2))
+```
+
+Thêm **một file `.py`** dưới `src/ips/data/preprocessors/` với `PREPROCESS_NAME` duy nhất và `build_preprocessor(**params)`. Đối tượng trả về cần có `fit(train_frame)`, `transform(frame)` và `state_dict()`. `fit` chỉ nhận train nội bộ của từng tòa, phải đặt `feature_columns` theo đúng thứ tự cột AP. `transform` trả về mảng `np.float32` kích thước `[số dòng, số đặc trưng]`; RSS thiếu phải là `-1` để augmentation không biến AP vắng thành AP xuất hiện. `state_dict()` trả về dict lưu các tham số đã học vào checkpoint. Xem `rss_standard.py` và `ap_frequency.py` (lọc AP theo số lần được quan sát trong train). Tham số plugin có thể đặt trong JSON config qua `preprocess_params`, ví dụ `{"min_observations": 20}`.
+
+Chạy `ips-train --list-options` và `python -m unittest discover -s tests -v`. Sau khi push nhánh, đặt `BRANCH` của notebook theo nhánh đó và **chạy lại ô tải repo và ô dropdown**. Colab đang mở không tự kéo commit mới; cần chạy lại các ô này. Sau khi merge vào `main`, mọi người dùng `main` sẽ thấy lựa chọn mới. File chỉ xuất hiện trong dropdown khi đúng giao diện plugin; file helper không khai báo tên/builder sẽ bị bỏ qua, còn khai báo thiếu sẽ báo lỗi rõ ràng. Riêng preset residual Mixer hiện chỉ hỗ trợ `bsrbf_kan` với đủ 520 AP (`rss_standard`).
 
 ## Giao thức đánh giá
 
