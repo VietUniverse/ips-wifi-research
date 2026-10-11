@@ -72,6 +72,23 @@ class TestPipeline(unittest.TestCase):
             summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(set(summary["official_test"]), {"knn"})
 
+    def test_report_figures_for_single_and_multiple_models(self):
+        from ips.experiments.visualize import compare_runs, render_run
+        with tempfile.TemporaryDirectory() as temp:
+            single, multiple = Path(temp) / "single", Path(temp) / "multiple"
+            with redirect_stdout(io.StringIO()):
+                run("ignored", single, _cfg(models=("knn",)), load_csvs, make_building_data)
+                run("ignored", multiple, _cfg(models=("knn", "wknn_inv_d")), load_csvs, make_building_data)
+            one, one_figures = render_run(single, show=False)
+            many, many_figures = render_run(multiple, show=False)
+            comparison, comparison_figures = compare_runs([single, multiple], show=False)
+            self.assertEqual(len(one), 1)
+            self.assertEqual(len(many), 2)
+            self.assertEqual(len(comparison), 3)
+            self.assertTrue(any("floor_confusion" in p.name for p in one_figures))
+            self.assertTrue(any("timing" in p.name for p in many_figures))
+            self.assertTrue(all(p.exists() for p in one_figures + many_figures + comparison_figures))
+
 
 if __name__ == "__main__":
     unittest.main()
