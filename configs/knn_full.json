@@ -1,0 +1,11 @@
+{
+  "models": ["knn", "wknn_inv_d", "wknn_inv_d2"],
+  "preprocess": "rss_powed",
+  "preprocess_params": {"min_rss": -104},
+  "buildings": [0, 1, 2],
+  "seed": 42,
+  "val_size": 0.15,
+  "k_max": 20,
+  "k_ref": 13,
+  "timing_repeats": 3
+}
