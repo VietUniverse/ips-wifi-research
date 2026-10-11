@@ -124,6 +124,7 @@ class ProtocolTests(unittest.TestCase):
         target = torch.full((4, 1, 520), -1.0)
         target[:, :, :10] = 0.5  # 10 "detected" APs out of 520
         prediction = torch.zeros_like(target)
+        prediction[:, :, :10] = -1.0  # make detected-AP error larger than missing-AP error
         plain_mse = torch.nn.functional.mse_loss(prediction, target)
         weighted = weighted_cdae_loss(prediction, target)
         # Detected APs are the overwhelming minority here, so the

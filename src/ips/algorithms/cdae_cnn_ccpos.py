@@ -159,6 +159,10 @@ class PositionHead(nn.Module):
 
     def __init__(self, input_dim: int):
         super().__init__()
+        if input_dim < 8:
+            raise ValueError(
+                f"cdae_cnn_ccpos needs at least 8 input features; got {input_dim}"
+            )
         self.features = nn.Sequential(
             Conv1dSameReLU(256, 256, 3),
             Conv1dSameReLU(256, 128, 3),
