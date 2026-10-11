@@ -1,8 +1,17 @@
 # Họ kNN / WKNN — hướng dẫn ghép vào repo
 
-Gói này **chỉ thêm file mới**, không sửa file nào của repo. Chép nguyên thư mục `src/`, `configs/`, `notebooks/`, `tests/` đè vào repo (không có file trùng tên).
+Họ KNN/WKNN nằm trên nhánh `feature/knn-wknn`. Nhánh này đã có mã nguồn, cấu hình, notebook Colab và test; dùng Pull Request để ghép vào `main`.
 
-## Nên dán vào `README.md` (mục "Thêm model hoặc cách xử lý RSS")
+## Chạy trên Colab
+
+1. Mở `notebooks/Colab_Train_KNN.ipynb` từ nhánh `feature/knn-wknn` và chạy ô 1. Ô này tải repo bằng Colab Secret `GITHUB_TOKEN` hoặc cho upload ZIP của nhánh nếu token thiếu/sai quyền.
+2. Với fine-grained GitHub token, chọn đúng repo `VietUniverse/ips-wifi-research` và quyền **Contents: Read**; trong Colab Secrets bật quyền truy cập của notebook với `GITHUB_TOKEN`. Không dán token vào ô mã.
+3. Ô 2 tự tải hai CSV UJIIndoorLoc; ô 3 dùng `knn_smoke.json` để thử, rồi đổi sang `knn_full.json` khi chạy đầy đủ. Ô 4 tải ZIP kết quả.
+4. Có thể dùng `notebooks/Colab_Train_UJI.ipynb` trên cùng nhánh: chọn **Họ model → KNN/WKNN**, model và preset `knn_*.json`.
+
+Sau khi đồng đội push commit mới, mở lại notebook từ đúng nhánh hoặc chạy lại ô tải repo. Bản notebook cũ đang mở trên Colab không tự cập nhật.
+
+## Thuật toán và giao thức
 
 > **Họ kNN/WKNN** (`src/ips/neighbors/`): kNN, WKNN (1/d), WKNN (1/d²) không phải `torch.nn.Module` và không huấn luyện bằng gradient nên nằm ngoài `ips.algorithms` và chạy bằng runner riêng, **dùng lại `load_csvs` và `make_building_data`** của repo.
 >
@@ -26,7 +35,7 @@ Trong `pyproject.toml` của repo thêm một dòng vào `[project.scripts]`:
 ips-knn = "ips.experiments.knn_cli:main"
 ```
 
-Không bắt buộc: `python -m ips.experiments.knn_cli` chạy được ngay. Thư viện cần thêm: `scipy` và `matplotlib` (đi kèm `scikit-learn`/`pandas` mà runner đã dùng).
+Không bắt buộc: `python -m ips.experiments.knn_cli` chạy được ngay. `scipy` đã được khai báo trong `pyproject.toml`; `matplotlib` là tùy chọn để xuất biểu đồ.
 
 ## Repo giả định (đã đọc từ runner.py, chưa chạy với dữ liệu UJI thật)
 
