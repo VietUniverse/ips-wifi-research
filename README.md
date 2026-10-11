@@ -38,6 +38,16 @@ Thêm **một file `.py`** dưới `src/ips/data/preprocessors/` với `PREPROCE
 
 Chạy `ips-train --list-options` và `python -m unittest discover -s tests -v`. Sau khi push nhánh, đặt `BRANCH` của notebook theo nhánh đó và **chạy lại ô tải repo và ô dropdown**. Colab đang mở không tự kéo commit mới; cần chạy lại các ô này. Sau khi merge vào `main`, mọi người dùng `main` sẽ thấy lựa chọn mới. File chỉ xuất hiện trong dropdown khi đúng giao diện plugin; file helper không khai báo tên/builder sẽ bị bỏ qua, còn khai báo thiếu sẽ báo lỗi rõ ràng. Riêng preset residual Mixer hiện chỉ hỗ trợ `bsrbf_kan` với đủ 520 AP (`rss_standard`).
 
+### `cdae_cnn_ccpos`
+
+Transcribe trực tiếp từ notebook tác giả cung cấp (`ccpos.ipynb`), bản triển khai thật của paper **CCpos** (Qin, Zuo & Wang 2021, *Sensors* 21(4):1114, "WiFi Fingerprint Indoor Positioning System Based on CDAE-CNN") — không còn là bản suy đoán từ PDF như trước. Giữ nguyên các class `CDAE`, `Conv1dSameReLU`, `PositionHead` và hàm loss có trọng số (`weighted_cdae_loss`) y hệt notebook (kênh 1→454→388→256, kernel size 3/2/1 trộn lẫn với padding bất đối xứng cho kernel chẵn, nhiễu Gaussian cộng tính λ=0.3).
+
+Khác với `cdae_mmj` (MLP + Mixer, từ 1 notebook hoàn toàn khác, chỉ trùng tên "CDAE"). Notebook gốc `ccpos.ipynb` thực chất là 1 pipeline lớn hơn nhiều (pretrain CDAE riêng → đóng băng encoder → train model phân loại building, phân loại floor, CNN vị trí qua 3 giai đoạn → ensemble BF-MLP) — phần đó **không khớp** với giao thức của repo (building đã biết trước qua vòng lặp ngoài của `runner.py`, không có khái niệm dự đoán floor, và `build_model(input_dim)` không được truyền dữ liệu thật nên không thể pretrain riêng trước khi vòng train chính bắt đầu). Theo đúng yêu cầu "giữ luồng repo + đúng cấu trúc ccpos.ipynb", file này chỉ giữ lại phần CDAE + CNN dự đoán vị trí, train **đồng thời** encoder và head qua kỹ thuật backprop nội bộ (giống `mmj_common._JointMixerPlugin`) thay vì 2 giai đoạn pretrain-rồi-đóng-băng như notebook gốc — xem docstring đầu file để biết đầy đủ các điều chỉnh và lý do (gồm cả 3 điểm khác do phải tương thích `rss_standard`/`DeviceAugmentedRSSDataset` thay vì encoding riêng của notebook).
+
+Preset: `configs/cdae_cnn_ccpos_baseline.json` (batch 70, patience 10, 150 epoch — đúng `BATCH_SIZE`/`POSITION_PATIENCE`/`POSITION_EPOCHS` trong `ccpos.ipynb`), `configs/cdae_cnn_ccpos_smoke.json` (chạy nhanh kiểm tra luồng).
+
+**Chưa làm** (ngoài phạm vi): thuật toán chọn validation set bằng K-means của notebook, model phân loại building/floor, và pipeline ensemble BF-MLP — đều là thay đổi lớn hơn 1 model đơn lẻ, cần bàn riêng nếu muốn đưa vào repo.
+
 ## Giao thức đánh giá
 
 - `trainingData.csv` dùng để chia train/internal validation theo **nhóm vị trí**. Cùng một vị trí không ở cả hai tập.
