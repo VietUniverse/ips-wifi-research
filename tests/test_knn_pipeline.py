@@ -1,6 +1,8 @@
 import importlib.util
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 import numpy as np
 from ips.experiments.knn_report import Comparator
@@ -17,7 +19,8 @@ class TestPipeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         tr, te = make_frames(900, 200)
-        cls.exp = Experiment.from_frames(tr, te, _cfg(), make_building_data)
+        with redirect_stdout(io.StringIO()):
+            cls.exp = Experiment.from_frames(tr, te, _cfg(), make_building_data)
 
     def test_missing_ap_is_minus_one(self):
         tr, _ = make_frames(50, 10)
@@ -44,12 +47,14 @@ class TestPipeline(unittest.TestCase):
         def bad(*a):
             d = make_building_data(*a); d.val_rows = d.val_rows[::-1].copy(); return d
         tr, te = make_frames(300, 60)
-        with self.assertRaises(ValueError): Experiment.from_frames(tr, te, _cfg(), bad)
+        with redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
+            Experiment.from_frames(tr, te, _cfg(), bad)
 
     def test_full_run_and_files(self):
         with tempfile.TemporaryDirectory() as t:
             out = Path(t) / "o"
-            cmp_ = run("ignored", out, _cfg(), load_csvs, make_building_data)
+            with redirect_stdout(io.StringIO()):
+                cmp_ = run("ignored", out, _cfg(), load_csvs, make_building_data)
             files = ["config.json", "sweep_by_k.csv", "wilcoxon.csv", "by_building.csv", "summary.json",
                      "building_0/split.csv", "building_0/predictions.csv"]
             if importlib.util.find_spec("matplotlib"): files.append("C2_test_mean_error.png")   # biểu đồ chỉ khi có matplotlib
@@ -57,6 +62,15 @@ class TestPipeline(unittest.TestCase):
                 self.assertTrue((out / f).exists(), f)
             with self.assertRaises(FileExistsError): run("ignored", out, _cfg(), load_csvs, make_building_data)
         self.assertEqual(len(cmp_.pairs), 3)
+
+    def test_single_model_run_used_by_shared_colab(self):
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / "one_model"
+            with redirect_stdout(io.StringIO()):
+                run("ignored", out, _cfg(models=("knn",)), load_csvs, make_building_data)
+            import json
+            summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(summary["official_test"]), {"knn"})
 
 
 if __name__ == "__main__":

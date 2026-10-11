@@ -134,12 +134,13 @@ class Comparator:
         ax.set(xlim=(0, 40), xlabel="Sai số vị trí (m)", ylabel="Tỉ lệ mẫu có sai số ≤ x", title="CDF sai số (official test, mọi mẫu)")
         ax.grid(alpha=.3); ax.legend(); fig.tight_layout(); fig.savefig(outdir / "C4_cdf.png", dpi=150); plt.close(fig); saved.append("C4_cdf.png")
         if self.d1 is None: self._d1()
-        fig, ax = plt.subplots(figsize=(10, 4.8)); w = 0.8 / max(len(self.pairs), 1)
-        for j, (a, b) in enumerate(self.pairs):
-            ax.bar(self.d1.index + (j - (len(self.pairs) - 1) / 2) * w, self.d1[self.tag(a, b)], width=w, label=self.tag(a, b))
-        ax.axhline(0, color="k", lw=.8)
-        ax.set(xlabel="k", ylabel="Chênh lệch sai số TB (m)", xticks=range(1, K + 1), title="Chênh lệch sai số test giữa các cặp (dương = phương pháp thứ hai tốt hơn)")
-        ax.grid(alpha=.3, axis="y"); ax.legend(); fig.tight_layout(); fig.savefig(outdir / "C6_chenh_lech.png", dpi=150); plt.close(fig); saved.append("C6_chenh_lech.png")
+        if self.pairs:
+            fig, ax = plt.subplots(figsize=(10, 4.8)); w = 0.8 / len(self.pairs)
+            for j, (a, b) in enumerate(self.pairs):
+                ax.bar(self.d1.index + (j - (len(self.pairs) - 1) / 2) * w, self.d1[self.tag(a, b)], width=w, label=self.tag(a, b))
+            ax.axhline(0, color="k", lw=.8)
+            ax.set(xlabel="k", ylabel="Chênh lệch sai số TB (m)", xticks=range(1, K + 1), title="Chênh lệch sai số test giữa các cặp (dương = phương pháp thứ hai tốt hơn)")
+            ax.grid(alpha=.3, axis="y"); ax.legend(); fig.tight_layout(); fig.savefig(outdir / "C6_chenh_lech.png", dpi=150); plt.close(fig); saved.append("C6_chenh_lech.png")
         return saved
 
     # ---------- xuất file (bố cục giống runner của repo) ----------
