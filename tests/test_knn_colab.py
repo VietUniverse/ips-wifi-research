@@ -8,8 +8,9 @@ import unittest
 import zipfile
 from contextlib import redirect_stdout
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_KNN.ipynb"
@@ -40,12 +41,12 @@ class KNNColabTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             source = source.replace('root = Path("/content/knn_repo_source")',
                                     f"root = Path({temp!r}) / 'download'")
-            response = SimpleNamespace(ok=False, status_code=401)
+            failure = HTTPError("https://api.github.com", 401, "Unauthorized", None, None)
             output = io.StringIO()
             with patch.dict(sys.modules, {"google": google, "google.colab": colab,
                                           "google.colab.files": files,
                                           "google.colab.userdata": userdata}), \
-                 patch("requests.get", return_value=response), \
+                 patch("urllib.request.urlopen", side_effect=failure), \
                  patch("subprocess.run") as commands, redirect_stdout(output):
                 namespace = {}
                 exec(compile(source, "KNN bootstrap", "exec"), namespace)
