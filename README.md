@@ -36,6 +36,16 @@ def build_model(input_dim):
 
 Thêm **một file `.py`** dưới `src/ips/data/preprocessors/` với `PREPROCESS_NAME` duy nhất và `build_preprocessor(**params)`. Đối tượng trả về cần có `fit(train_frame)`, `transform(frame)` và `state_dict()`. `fit` chỉ nhận train nội bộ của từng tòa, phải đặt `feature_columns` theo đúng thứ tự cột AP. `transform` trả về mảng `np.float32` kích thước `[số dòng, số đặc trưng]`; RSS thiếu phải là `-1` để augmentation không biến AP vắng thành AP xuất hiện. `state_dict()` trả về dict lưu các tham số đã học vào checkpoint. Xem `rss_standard.py` và `ap_frequency.py` (lọc AP theo số lần được quan sát trong train). Tham số plugin có thể đặt trong JSON config qua `preprocess_params`, ví dụ `{"min_observations": 20}`.
 
+### `sae_mmj` và `cdae_mmj`
+
+Hai model này (SAE/CDAE front-end + MLP-Mixer + position head, loss = reconstruction + position) được chuyển từ notebook nghiên cứu riêng vào đúng chuẩn plugin, với 3 điều chỉnh có chủ đích so với notebook gốc — xem docstring đầu `src/ips/algorithms/mmj_common.py` để biết chi tiết và lý do:
+
+- **Train theo từng tòa** (như mọi model khác trong repo) thay vì gộp cả 3 tòa, để so sánh công bằng với `mlp`/`bsrbf_kan`.
+- **Dùng `rss_standard`** (không phải encoding `[0,1]` riêng của notebook) để tương thích với `DeviceAugmentedRSSDataset` dùng chung cho mọi model; decoder đổi `Sigmoid` → `Tanh` và corruption của CDAE đổi "zero-out" → "set về -1" cho khớp miền giá trị.
+- **Reconstruction loss vẫn được backprop đầy đủ** mà không cần sửa `runner.py`: `forward()` tự gọi `backward(retain_graph=True)` cho phần reconstruction loss trước khi trả về dự đoán vị trí, gradient cộng dồn đúng như joint loss gốc khi `runner.py` gọi `backward()` cho phần position loss ở ngoài. Có unit test trong `tests/test_protocol.py` xác nhận gradient được cộng dồn đúng.
+
+Preset: `configs/sae_mmj_baseline.json`, `configs/cdae_mmj_baseline.json` (200 epoch, patience 5, giống notebook), `configs/mmj_smoke.json` (chạy nhanh để kiểm tra luồng).
+
 Chạy `ips-train --list-options` và `python -m unittest discover -s tests -v`. Sau khi push nhánh, đặt `BRANCH` của notebook theo nhánh đó và **chạy lại ô tải repo và ô dropdown**. Colab đang mở không tự kéo commit mới; cần chạy lại các ô này. Sau khi merge vào `main`, mọi người dùng `main` sẽ thấy lựa chọn mới. File chỉ xuất hiện trong dropdown khi đúng giao diện plugin; file helper không khai báo tên/builder sẽ bị bỏ qua, còn khai báo thiếu sẽ báo lỗi rõ ràng. Riêng preset residual Mixer hiện chỉ hỗ trợ `bsrbf_kan` với đủ 520 AP (`rss_standard`).
 
 ## Giao thức đánh giá

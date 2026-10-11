@@ -1,0 +1,11 @@
+{
+  "model": "sae_mmj",
+  "preprocess": "rss_standard",
+  "buildings": [0, 1, 2],
+  "seed": 42,
+  "batch_size": 64,
+  "stage1_epochs": 0,
+  "stage2_epochs": 200,
+  "patience": 5,
+  "with_mixer": false
+}
