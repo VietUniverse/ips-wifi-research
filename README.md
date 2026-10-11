@@ -7,8 +7,9 @@ Mã thí nghiệm UJIIndoorLoc cho MLP, BSRBF-KAN và BSRBF-KAN + residual KAN-M
 1. Mở `notebooks/Colab_Train_UJI.ipynb` trên Colab và chọn GPU ở **Runtime → Change runtime type**.
 2. Vì repo là private, thêm một GitHub token có quyền đọc repo vào Colab Secrets với tên `GITHUB_TOKEN`, hoặc tải ZIP của repo từ GitHub rồi upload ở ô đầu notebook. Không ghi token vào notebook, Git commit hay output.
 3. Đặt `BRANCH` ở ô đầu thành nhánh muốn thử, rồi chạy các ô theo thứ tự. Notebook tải UJIIndoorLoc từ UCI vào `/content/data/uji` nếu chưa có CSV.
-4. Dropdown tự đọc model và bộ tiền xử lý trong nhánh. Nếu nhánh chứa `src/ips/neighbors/`, dropdown **Họ model** cũng hiện KNN/WKNN và gọi runner tương ứng. Chọn preset, model và RSS. Smoke chạy nhanh để kiểm tra đường dữ liệu; BSRBF-KAN đầy đủ có thể mất nhiều giờ.
-5. Tải ZIP kết quả từ `/content/runs`. Repo không lưu CSV gốc hoặc checkpoint.
+4. Dropdown tự đọc model và bộ tiền xử lý trong nhánh. Nếu nhánh chứa `src/ips/neighbors/`, dropdown **Họ model** cũng hiện KNN/WKNN và gọi runner tương ứng. Có thể chọn một hoặc nhiều model bằng Ctrl/Cmd + click. Chọn preset và RSS. Smoke chỉ kiểm tra đường dữ liệu; số liệu báo cáo cần chạy full.
+5. Notebook hiện bảng thông số và biểu đồ sau mỗi lần chạy; với nhiều model còn có biểu đồ so sánh trên cùng các mẫu official test. Ảnh PNG và bảng CSV nằm trong thư mục `figures/` hoặc `comparison_figures/` trong ZIP kết quả. Ma trận nhầm lẫn thể hiện dự đoán tầng của KNN/WKNN; tọa độ được đánh giá bằng sai số mét và CDF.
+6. Tải ZIP kết quả từ `/content/runs`. Repo không lưu CSV gốc hoặc checkpoint.
 
 Colab dùng cùng entry point với máy local:
 
