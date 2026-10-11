@@ -7,7 +7,7 @@ Mã thí nghiệm UJIIndoorLoc cho MLP, BSRBF-KAN và BSRBF-KAN + residual KAN-M
 1. Mở `notebooks/Colab_Train_UJI.ipynb` trên Colab và chọn GPU ở **Runtime → Change runtime type**.
 2. Vì repo là private, thêm một GitHub token có quyền đọc repo vào Colab Secrets với tên `GITHUB_TOKEN`, hoặc tải ZIP của repo từ GitHub rồi upload ở ô đầu notebook. Không ghi token vào notebook, Git commit hay output.
 3. Đặt `BRANCH` ở ô đầu thành nhánh muốn thử, rồi chạy các ô theo thứ tự. Notebook tải UJIIndoorLoc từ UCI vào `/content/data/uji` nếu chưa có CSV.
-4. Dropdown tự đọc model và bộ tiền xử lý trong nhánh. Chọn preset, model và RSS. Smoke chạy nhanh để kiểm tra đường dữ liệu; BSRBF-KAN đầy đủ có thể mất nhiều giờ.
+4. Dropdown tự đọc model và bộ tiền xử lý trong nhánh. Nếu nhánh chứa `src/ips/neighbors/`, dropdown **Họ model** cũng hiện KNN/WKNN và gọi runner tương ứng. Chọn preset, model và RSS. Smoke chạy nhanh để kiểm tra đường dữ liệu; BSRBF-KAN đầy đủ có thể mất nhiều giờ.
 5. Tải ZIP kết quả từ `/content/runs`. Repo không lưu CSV gốc hoặc checkpoint.
 
 Colab dùng cùng entry point với máy local:
@@ -46,7 +46,7 @@ Hai model này (SAE/CDAE front-end + MLP-Mixer + position head, loss = reconstru
 
 Preset: `configs/sae_mmj_baseline.json`, `configs/cdae_mmj_baseline.json` (200 epoch, patience 5, giống notebook), `configs/mmj_smoke.json` (chạy nhanh để kiểm tra luồng).
 
-Chạy `ips-train --list-options` và `python -m unittest discover -s tests -v`. Sau khi push nhánh, đặt `BRANCH` của notebook theo nhánh đó và **chạy lại ô tải repo và ô dropdown**. Colab đang mở không tự kéo commit mới; cần chạy lại các ô này. Sau khi merge vào `main`, mọi người dùng `main` sẽ thấy lựa chọn mới. File chỉ xuất hiện trong dropdown khi đúng giao diện plugin; file helper không khai báo tên/builder sẽ bị bỏ qua, còn khai báo thiếu sẽ báo lỗi rõ ràng. Riêng preset residual Mixer hiện chỉ hỗ trợ `bsrbf_kan` với đủ 520 AP (`rss_standard`).
+Chạy `ips-train --list-options` và `python -m unittest discover -s tests -v`. Sau khi push nhánh, đặt `BRANCH` của notebook theo nhánh đó và **chạy lại ô tải repo và ô dropdown**. Colab đang mở không tự kéo commit mới; cần chạy lại các ô này. Sau khi merge vào `main`, mọi người dùng `main` sẽ thấy lựa chọn mới. File chỉ xuất hiện trong dropdown khi đúng giao diện plugin; file helper không khai báo tên/builder sẽ bị bỏ qua, còn khai báo thiếu sẽ báo lỗi rõ ràng. KNN/WKNN được phát hiện từ `src/ips/neighbors/` khi nhánh có gói này; dùng preset `knn_*.json`. Riêng preset residual Mixer hiện chỉ hỗ trợ `bsrbf_kan` với đủ 520 AP (`rss_standard`).
 
 ## Giao thức đánh giá
 
@@ -76,10 +76,11 @@ runs/                 kết quả từng lần chạy, bị Git ignore
 | Nhánh | Người phụ trách | Phạm vi |
 |---|---|---|
 | `main` | Chủ repo | Tích hợp và release |
-| `feature/data-robustness` | Thành viên 1 | AP selection, device-aware split, RSS augmentation và phân tích tòa 1/2 |
-| `feature/kan-mixer` | Thành viên 2 | BSRBF-KAN, Mixer, ablation và tối ưu huấn luyện |
+| `feature/data-robustness` | Nhánh mẫu | AP selection, device-aware split, RSS augmentation và phân tích tòa 1/2 |
+| `feature/kan-mixer` | Nhánh mẫu | BSRBF-KAN, Mixer, ablation và tối ưu huấn luyện |
+| `feature/MMJ`, `feature/CCPos_CDAE-CNN`, `feature/knn-wknn` | Nhánh đang phát triển | Mô hình do nhóm bổ sung; xem CI và Pull Request trước khi merge |
 
-Hai nhánh feature được tạo từ `main`. Mỗi người clone repo, checkout nhánh của mình, commit thay đổi, push, rồi mở Pull Request vào `main`. Cần review mã và giao thức trước khi merge. Khi sửa giao diện chung trong `runner.py`, mở PR nhỏ sớm để tránh hai người sửa cùng một file lâu ngày.
+Mỗi người clone repo, checkout nhánh của mình, commit thay đổi, push, rồi mở Pull Request vào `main`. Cần review mã và giao thức trước khi merge. Khi sửa giao diện chung trong `runner.py`, mở PR nhỏ sớm để tránh hai người sửa cùng một file lâu ngày.
 
 ```bash
 git clone https://github.com/VietUniverse/ips-wifi-research.git
