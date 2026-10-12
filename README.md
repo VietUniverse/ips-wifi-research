@@ -7,8 +7,9 @@ Mã thí nghiệm UJIIndoorLoc cho MLP, BSRBF-KAN và BSRBF-KAN + residual KAN-M
 1. Mở `notebooks/Colab_Train_UJI.ipynb` trên Colab và chọn GPU ở **Runtime → Change runtime type**.
 2. Vì repo là private, thêm một GitHub token có quyền đọc repo vào Colab Secrets với tên `GITHUB_TOKEN`, hoặc tải ZIP của repo từ GitHub rồi upload ở ô đầu notebook. Không ghi token vào notebook, Git commit hay output.
 3. Đặt `BRANCH` ở ô đầu thành nhánh muốn thử, rồi chạy các ô theo thứ tự. Notebook tải UJIIndoorLoc từ UCI vào `/content/data/uji` nếu chưa có CSV.
-4. Dropdown tự đọc model và bộ tiền xử lý trong nhánh. Nếu nhánh chứa `src/ips/neighbors/`, dropdown **Họ model** cũng hiện KNN/WKNN và gọi runner tương ứng. Chọn preset, model và RSS. Smoke chạy nhanh để kiểm tra đường dữ liệu; BSRBF-KAN đầy đủ có thể mất nhiều giờ.
-5. Tải ZIP kết quả từ `/content/runs`. Repo không lưu CSV gốc hoặc checkpoint.
+4. Ô menu tự đọc model và bộ tiền xử lý trong nhánh rồi dừng để bạn nhập số lựa chọn. Nếu nhánh chứa `src/ips/neighbors/`, menu **Họ model** cũng hiện KNN/WKNN và gọi runner tương ứng. Có thể chọn nhiều model bằng các số cách nhau bằng dấu phẩy, ví dụ `1,3`. Chọn preset và RSS. Smoke chỉ kiểm tra đường dữ liệu; số liệu báo cáo cần chạy full.
+5. Notebook hiện bảng thông số và biểu đồ sau mỗi lần chạy; với nhiều model còn có biểu đồ so sánh trên cùng các mẫu official test. Ảnh PNG và bảng CSV nằm trong thư mục `figures/` hoặc `comparison_figures/` trong ZIP kết quả. Ma trận nhầm lẫn thể hiện dự đoán tầng của KNN/WKNN; tọa độ được đánh giá bằng sai số mét và CDF.
+6. Tải ZIP kết quả từ `/content/runs`. Repo không lưu CSV gốc hoặc checkpoint.
 
 Colab dùng cùng entry point với máy local:
 
@@ -36,17 +37,7 @@ def build_model(input_dim):
 
 Thêm **một file `.py`** dưới `src/ips/data/preprocessors/` với `PREPROCESS_NAME` duy nhất và `build_preprocessor(**params)`. Đối tượng trả về cần có `fit(train_frame)`, `transform(frame)` và `state_dict()`. `fit` chỉ nhận train nội bộ của từng tòa, phải đặt `feature_columns` theo đúng thứ tự cột AP. `transform` trả về mảng `np.float32` kích thước `[số dòng, số đặc trưng]`; RSS thiếu phải là `-1` để augmentation không biến AP vắng thành AP xuất hiện. `state_dict()` trả về dict lưu các tham số đã học vào checkpoint. Xem `rss_standard.py` và `ap_frequency.py` (lọc AP theo số lần được quan sát trong train). Tham số plugin có thể đặt trong JSON config qua `preprocess_params`, ví dụ `{"min_observations": 20}`.
 
-### `sae_mmj` và `cdae_mmj`
-
-Hai model này (SAE/CDAE front-end + MLP-Mixer + position head, loss = reconstruction + position) được chuyển từ notebook nghiên cứu riêng vào đúng chuẩn plugin, với 3 điều chỉnh có chủ đích so với notebook gốc — xem docstring đầu `src/ips/algorithms/mmj_common.py` để biết chi tiết và lý do:
-
-- **Train theo từng tòa** (như mọi model khác trong repo) thay vì gộp cả 3 tòa, để so sánh công bằng với `mlp`/`bsrbf_kan`.
-- **Dùng `rss_standard`** (không phải encoding `[0,1]` riêng của notebook) để tương thích với `DeviceAugmentedRSSDataset` dùng chung cho mọi model; decoder đổi `Sigmoid` → `Tanh` và corruption của CDAE đổi "zero-out" → "set về -1" cho khớp miền giá trị.
-- **Reconstruction loss vẫn được backprop đầy đủ** mà không cần sửa `runner.py`: `forward()` tự gọi `backward(retain_graph=True)` cho phần reconstruction loss trước khi trả về dự đoán vị trí, gradient cộng dồn đúng như joint loss gốc khi `runner.py` gọi `backward()` cho phần position loss ở ngoài. Có unit test trong `tests/test_protocol.py` xác nhận gradient được cộng dồn đúng.
-
-Preset: `configs/sae_mmj_baseline.json`, `configs/cdae_mmj_baseline.json` (200 epoch, patience 5, giống notebook), `configs/mmj_smoke.json` (chạy nhanh để kiểm tra luồng).
-
-Chạy `ips-train --list-options` và `python -m unittest discover -s tests -v`. Sau khi push nhánh, đặt `BRANCH` của notebook theo nhánh đó và **chạy lại ô tải repo và ô dropdown**. Colab đang mở không tự kéo commit mới; cần chạy lại các ô này. Sau khi merge vào `main`, mọi người dùng `main` sẽ thấy lựa chọn mới. File chỉ xuất hiện trong dropdown khi đúng giao diện plugin; file helper không khai báo tên/builder sẽ bị bỏ qua, còn khai báo thiếu sẽ báo lỗi rõ ràng. KNN/WKNN được phát hiện từ `src/ips/neighbors/` khi nhánh có gói này; dùng preset `knn_*.json`. Riêng preset residual Mixer hiện chỉ hỗ trợ `bsrbf_kan` với đủ 520 AP (`rss_standard`).
+Chạy `ips-train --list-options` và `python -m unittest discover -s tests -v`. Sau khi push nhánh, đặt `BRANCH` của notebook theo nhánh đó và **chạy lại ô tải repo và ô menu**. Colab đang mở không tự kéo commit mới; cần chạy lại các ô này. Sau khi merge vào `main`, mọi người dùng `main` sẽ thấy lựa chọn mới. File chỉ xuất hiện trong menu khi đúng giao diện plugin; file helper không khai báo tên/builder sẽ bị bỏ qua, còn khai báo thiếu sẽ báo lỗi rõ ràng. KNN/WKNN được phát hiện từ `src/ips/neighbors/` khi nhánh có gói này; dùng preset `knn_*.json`. Riêng preset residual Mixer hiện chỉ hỗ trợ `bsrbf_kan` với đủ 520 AP (`rss_standard`).
 
 ## Giao thức đánh giá
 
