@@ -1,7 +1,5 @@
 # WiFi indoor positioning research
 
-Mã thí nghiệm UJIIndoorLoc cho MLP, BSRBF-KAN và BSRBF-KAN + residual KAN-Mixer. Repo này tách model, dữ liệu, bộ chạy và kết quả. Các notebook trong `notebooks/legacy/` là bản lịch sử v5–v7; số liệu cũ không tự động là kết quả của runner mới.
-
 ## Chạy trên Google Colab
 
 1. Mở `notebooks/Colab_Train_UJI.ipynb` trên Colab và chọn GPU ở **Runtime → Change runtime type**.
