@@ -45,7 +45,7 @@ class NotebookTests(unittest.TestCase):
         self.assertIn('extract_branch("main", root)', setup)
         self.assertIn('startswith("feature/")', setup)
         self.assertIn('src", "ips", "algorithms"', setup)
-        self.assertIn('src", "ips", "preprocessors"', setup)
+        self.assertIn('"data", "preprocessors")', setup)
         self.assertIn('target.exists()', setup)
 
     def test_shared_colab_code_cells_compile_and_are_clean(self):
