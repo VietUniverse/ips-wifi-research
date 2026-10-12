@@ -1,90 +1,124 @@
-# WiFi indoor positioning research
+# Định vị trong nhà bằng WiFi RSSI
+
+Repo này chứa pipeline thí nghiệm UJIIndoorLoc: tải dữ liệu, tiền xử lý RSSI, huấn luyện model, đánh giá theo từng tòa và xuất biểu đồ/bảng kết quả. Colab dùng mã nền từ `main` và tự lấy plugin mới từ các nhánh `feature/*` trên GitHub; không cần tạo nhánh tích hợp hay chép code thủ công giữa các nhánh.
 
 ## Chạy trên Google Colab
 
-1. Mở `notebooks/Colab_Train_UJI.ipynb` trên Colab và chọn GPU ở **Runtime → Change runtime type**.
-2. Vì repo là private, thêm một GitHub token có quyền đọc repo vào Colab Secrets với tên `GITHUB_TOKEN`, hoặc tải ZIP của repo từ GitHub rồi upload ở ô đầu notebook. Không ghi token vào notebook, Git commit hay output.
-3. Ô đầu liệt kê các nhánh `feature/*` trên GitHub và đợi bạn chọn nhánh muốn thử. Nếu token chưa có quyền đọc repo, menu dùng danh sách gợi ý; có thể nhập tên nhánh mới và upload ZIP của đúng nhánh. Notebook tải UJIIndoorLoc từ UCI vào `/content/data/uji` nếu chưa có CSV.
-4. Ô menu tự đọc model và bộ tiền xử lý trong nhánh rồi dừng để bạn nhập số lựa chọn. Nếu nhánh chứa `src/ips/neighbors/`, menu **Họ model** cũng hiện KNN/WKNN và gọi runner tương ứng. Có thể chọn nhiều model bằng các số cách nhau bằng dấu phẩy, ví dụ `1,3`. Chọn preset và RSS. Smoke chỉ kiểm tra đường dữ liệu; số liệu báo cáo cần chạy full.
-5. Notebook hiện bảng thông số và biểu đồ sau mỗi lần chạy; với nhiều model còn có biểu đồ so sánh trên cùng các mẫu official test. Ảnh PNG và bảng CSV nằm trong thư mục `figures/` hoặc `comparison_figures/` trong ZIP kết quả. Ma trận nhầm lẫn thể hiện dự đoán tầng của KNN/WKNN; tọa độ được đánh giá bằng sai số mét và CDF.
-6. Tải ZIP kết quả từ `/content/runs`. Repo không lưu CSV gốc hoặc checkpoint.
+### 1. Mở notebook và bật GPU
 
-Colab dùng cùng entry point với máy local:
+Mở [`notebooks/Colab_Train_UJI.ipynb`](notebooks/Colab_Train_UJI.ipynb) trên GitHub bằng Google Colab. Chọn **Runtime → Change runtime type → T4 GPU** nếu có. Chạy notebook từ trên xuống, bắt đầu ở ô đầu tiên.
 
-```powershell
+### 2. Cấp quyền đọc repo private
+
+Notebook cần đọc `main` và các nhánh `feature/*` qua GitHub API. Trong Colab:
+
+1. Mở biểu tượng **Secrets** (chìa khóa) ở thanh bên.
+2. Tạo secret tên `GITHUB_TOKEN`, dán token vào ô giá trị và bật quyền truy cập cho notebook.
+3. Token cần quyền đọc nội dung repo private `VietUniverse/ips-wifi-research`: fine-grained token chọn đúng repo, quyền **Contents: Read-only** và **Metadata: Read-only**. Không dán token vào cell, file notebook, output hoặc Git.
+4. Chạy lại ô đầu sau khi cập nhật secret.
+
+Nếu nhận HTTP 401, token sai/hết hạn hoặc thiếu quyền đọc. HTTP 404 thường có nghĩa token chưa được cấp cho repo private hoặc sai tên repo. Notebook báo rõ lỗi và không in token.
+
+### 3. Notebook hợp nhất mã plugin
+
+Ô đầu tự động:
+
+1. Tải mã nền và `configs/` từ `main`.
+2. Lấy danh sách nhánh `feature/*` đang có trên GitHub.
+3. Quét từng nhánh và chép các file plugin/config mới vào project Colab.
+4. Giữ file từ `main` nếu cùng đường dẫn đã tồn tại, để plugin chưa merge không ghi đè runner dùng chung.
+5. Cài project, sau đó menu tự phát hiện model và cách xử lý RSS.
+
+Hiện các nhánh đóng góp gồm:
+
+| Nhánh | Thành phần được phát hiện |
+|---|---|
+| `feature/knn-wknn` | kNN, WKNN nghịch đảo khoảng cách, WKNN nghịch đảo bình phương; `rss_powed`; preset và runner KNN |
+| `feature/CCPos_CDAE-CNN` | plugin `cdae_cnn_ccpos` và preset của model |
+| `feature/MMJ` | `sae_mmj`, `cdae_mmj`, mã dùng chung và preset |
+| `main` | MLP, BSRBF-KAN, residual KAN-Mixer, RSS chuẩn hóa và AP frequency |
+
+Tất cả nhánh `feature/*` được quét tự động. Khi thành viên push file plugin mới hoặc config mới, chỉ cần **chạy lại từ ô đầu** để Colab tải phiên bản mới. Colab đang chạy không tự cập nhật mã sau khi push.
+
+Notebook chỉ tự thêm các file Python trong `src/ips/algorithms/`, `src/ips/data/preprocessors/`, `src/ips/neighbors/`, các runner `src/ips/experiments/knn_*.py` và JSON trong `configs/`. File trùng đường dẫn không bị ghi đè. Thay đổi vào file dùng chung như `runner.py`, `factory.py`, `pyproject.toml` hoặc một plugin đã tồn tại cần được review và merge vào `main`; nếu plugin mới cần thư viện ngoài các dependency của `main`, hãy khai báo và merge dependency đó trước.
+
+### 4. Chọn model và tiền xử lý
+
+Menu trong notebook đợi bạn nhập lựa chọn, không tự chạy model mặc định. Chọn họ model, model, cách xử lý RSS, preset và tham số RSS khi được hỏi.
+
+Các bộ tiền xử lý hiện có tùy theo nhánh tải được:
+
+- `rss_standard`: chuẩn hóa RSSI, giữ AP không phát hiện theo quy ước của repo.
+- `ap_frequency`: lọc AP theo số lần xuất hiện trong tập train.
+- `rss_powed`: biến đổi RSS theo lũy thừa, được thêm từ nhánh KNN/WKNN.
+
+KNN/WKNN dùng runner riêng, còn MLP/BSRBF-KAN/SAE/CDAE dùng runner neural. Trong một lượt menu, chỉ chọn nhiều model cùng họ runner. Muốn so sánh KNN với model neural, chạy hai lượt riêng trên cùng giao thức và so sánh kết quả xuất ra. Preset `bsrbf_residual_mixer.json` yêu cầu `bsrbf_kan`, `rss_standard` và đủ 520 AP.
+
+Ô chạy sẽ in cấu hình, số dòng dữ liệu, trạng thái GPU và tiến độ huấn luyện. Kết quả gồm thông số sai số, biểu đồ CDF, phân bố lỗi, lỗi theo tòa, lịch sử train cho model neural và ma trận nhầm lẫn tầng cho KNN/WKNN. ZIP kết quả được tải xuống từ notebook. Ma trận nhầm lẫn áp dụng cho phân loại tầng; định vị tọa độ được báo cáo bằng khoảng cách Euclid theo mét.
+
+## Chạy local
+
+```bash
 python -m pip install -e .
-ips-train --config configs/mlp_smoke.json --data-dir D:\LAB\DoAnCoSo_2026\colab --output-dir runs\smoke
 ips-train --list-options
+ips-train --config configs/mlp_smoke.json \
+  --data-dir /path/to/UJIIndoorLoc \
+  --output-dir runs/mlp_smoke
 ```
 
-`--output-dir` phải mới hoặc rỗng. Các file chính trong mỗi run: `config.json`, `building_N/split.csv`, `building_N/history.csv`, `building_N/predictions.csv`, `building_N/checkpoint.pt`, `by_building.csv` và `summary.json`.
+Trên Windows PowerShell, thay đường dẫn dữ liệu bằng thư mục chứa `trainingData.csv` và `validationData.csv`. `--output-dir` phải là thư mục mới hoặc rỗng. Các run lưu cấu hình, split, lịch sử train, dự đoán, checkpoint và `summary.json`.
 
-## Thêm model hoặc cách xử lý RSS
+## Thêm model hoặc tiền xử lý ở nhánh thành viên
 
-Thêm **một file `.py`** dưới `src/ips/algorithms/` với `MODEL_NAME` duy nhất và hàm `build_model(input_dim)` trả về `torch.nn.Module` có đầu ra `[batch, 2]` là tọa độ chuẩn hóa. Ví dụ:
+### Model neural
+
+Thêm module trong `src/ips/algorithms/` khai báo `MODEL_NAME` và `build_model(input_dim)`. Hàm builder trả về `torch.nn.Module`, đầu ra có dạng `[batch, 2]` là tọa độ đã chuẩn hóa. Tên model phải duy nhất. Thêm preset JSON vào `configs/` nếu cần thiết lập train riêng.
 
 ```python
-# src/ips/algorithms/my_model.py
-import torch
 MODEL_NAME = "my_model"
 
 def build_model(input_dim):
-    return torch.nn.Sequential(torch.nn.Linear(input_dim, 128),
-                               torch.nn.ReLU(), torch.nn.Linear(128, 2))
+    return torch.nn.Sequential(
+        torch.nn.Linear(input_dim, 128),
+        torch.nn.ReLU(),
+        torch.nn.Linear(128, 2),
+    )
 ```
 
-Thêm **một file `.py`** dưới `src/ips/data/preprocessors/` với `PREPROCESS_NAME` duy nhất và `build_preprocessor(**params)`. Đối tượng trả về cần có `fit(train_frame)`, `transform(frame)` và `state_dict()`. `fit` chỉ nhận train nội bộ của từng tòa, phải đặt `feature_columns` theo đúng thứ tự cột AP. `transform` trả về mảng `np.float32` kích thước `[số dòng, số đặc trưng]`; RSS thiếu phải là `-1` để augmentation không biến AP vắng thành AP xuất hiện. `state_dict()` trả về dict lưu các tham số đã học vào checkpoint. Xem `rss_standard.py` và `ap_frequency.py` (lọc AP theo số lần được quan sát trong train). Tham số plugin có thể đặt trong JSON config qua `preprocess_params`, ví dụ `{"min_observations": 20}`.
+### Tiền xử lý RSS
 
-Chạy `ips-train --list-options` và `python -m unittest discover -s tests -v`. Sau khi push nhánh, chọn nhánh trong ô đầu notebook và **chạy lại ô tải repo và ô menu**. Colab đang mở không tự kéo commit mới; cần chạy lại các ô này. Sau khi merge vào `main`, mọi người chọn `main` sẽ thấy lựa chọn mới. File chỉ xuất hiện trong menu khi đúng giao diện plugin; file helper không khai báo tên/builder sẽ bị bỏ qua, còn khai báo thiếu sẽ báo lỗi rõ ràng. KNN/WKNN được phát hiện từ `src/ips/neighbors/` khi nhánh có gói này; dùng preset `knn_*.json`. Riêng preset residual Mixer hiện chỉ hỗ trợ `bsrbf_kan` với đủ 520 AP (`rss_standard`).
+Thêm module trong `src/ips/data/preprocessors/` khai báo `PREPROCESS_NAME` và `build_preprocessor(**params)`. Đối tượng phải có `fit(train_frame)`, `transform(frame)` và `state_dict()`. Fit chỉ trên train nội bộ của từng tòa; `transform` trả về `np.float32` dạng `[số mẫu, số đặc trưng]`, giữ AP vắng mặt theo quy ước repo.
 
-## Giao thức đánh giá
+### Quy tắc cộng tác
 
-- `trainingData.csv` dùng để chia train/internal validation theo **nhóm vị trí**. Cùng một vị trí không ở cả hai tập.
-- Chuẩn hóa tọa độ fit trên train nội bộ của từng tòa; augmentation RSS chỉ chạy trên train.
-- `validationData.csv` gồm 1.111 mẫu là official test. Runner chỉ tính test sau khi chọn epoch và hệ số alpha theo internal validation.
-- Từng model huấn luyện riêng theo tòa và giả định đã biết `BUILDINGID` lúc suy luận. Đây là giới hạn cần ghi trong báo cáo.
-- Metric chính: mean Euclidean distance tính bằng mét trên tất cả mẫu test; xuất thêm median và P90.
-- Official test đã được xem trong các thử nghiệm trước. Mọi cải tiến mới trên cùng tập này mang tính phát triển; muốn tuyên bố kết quả khách quan mới cần một bộ test chưa dùng để lựa chọn model.
+1. Mỗi thành viên làm trên nhánh `feature/<ten>` đã được tạo sẵn và push commit lên đó.
+2. Notebook tự quét nhánh và nạp file plugin/config mới; không tạo nhánh tổng hợp.
+3. Thay đổi file chung hoặc sửa code đã có cần mở Pull Request vào `main` để review.
+4. Chạy smoke/kiểm tra trong PR và ghi rõ dữ liệu, split, seed, preset, số mẫu và metric. Không commit dữ liệu gốc, token, checkpoint hoặc thư mục `runs/`.
 
-Runner mới có cùng ý tưởng kiến trúc và tiền xử lý cơ bản với notebook v5, nhưng lịch học và tối ưu hóa đã được gom về cấu hình chung. **Không kỳ vọng tái hiện chính xác 8,075 m hoặc 8,154 m** nếu chưa đối chiếu từng checkpoint và điều kiện train.
+## Giao thức đánh giá UJIIndoorLoc
 
-## Cấu trúc
+- `trainingData.csv` được chia thành train và internal validation theo nhóm vị trí, để cùng một vị trí không nằm ở cả hai tập.
+- Scaler tọa độ, chọn AP và chọn checkpoint chỉ được fit/tune trên train và internal validation.
+- `validationData.csv` gồm 1.111 mẫu official test; chỉ dùng để báo cáo sau khi đã chọn cấu hình bằng internal validation.
+- Mỗi model được huấn luyện riêng theo tòa và giả định biết `BUILDINGID` khi suy luận.
+- Metric vị trí chính là mean Euclidean distance (m); báo thêm median, P90 và tỷ lệ sai số không quá 5 m.
+- Official test đã được sử dụng trong các thử nghiệm trước đây. Cải thiện được chọn dựa trên cùng tập này là kết quả phát triển, không phải đánh giá độc lập mới.
+
+Runner hiện tại không nhất thiết tái hiện chính xác các con số từ notebook lịch sử; cần ghi rõ checkpoint, seed và giao thức khi so sánh.
+
+## Thư mục chính
 
 ```text
-src/ips/algorithms/   BSRBF-KAN, MLP, residual KAN-Mixer, model factory
-src/ips/data/         UJI loader, split theo vị trí, RSS augmentation
-src/ips/experiments/  train, chọn checkpoint, báo cáo, CLI
-configs/              cấu hình chạy, nằm trong Git
-notebooks/            Colab entry point và notebook lịch sử
-tests/                kiểm tra split, AP vắng mặt, model output
-runs/                 kết quả từng lần chạy, bị Git ignore
+src/ips/algorithms/       model neural và plugin discovery
+src/ips/data/             loader UJI, split, augmentation, tiền xử lý RSS
+src/ips/neighbors/        kNN/WKNN (từ nhánh KNN/WKNN)
+src/ips/experiments/      runner train, KNN, báo cáo và biểu đồ
+configs/                  cấu hình/preset
+notebooks/                notebook Colab và bản lịch sử
+runs/                     kết quả cục bộ, không commit
 ```
-
-## Làm việc nhóm
-
-| Nhánh | Người phụ trách | Phạm vi |
-|---|---|---|
-| `main` | Chủ repo | Tích hợp và release |
-| `feature/data-robustness` | Nhánh mẫu | AP selection, device-aware split, RSS augmentation và phân tích tòa 1/2 |
-| `feature/kan-mixer` | Nhánh mẫu | BSRBF-KAN, Mixer, ablation và tối ưu huấn luyện |
-| `feature/MMJ`, `feature/CCPos_CDAE-CNN`, `feature/knn-wknn` | Nhánh đang phát triển | Mô hình do nhóm bổ sung; xem CI và Pull Request trước khi merge |
-
-Mỗi người clone repo, checkout nhánh của mình, commit thay đổi, push, rồi mở Pull Request vào `main`. Cần review mã và giao thức trước khi merge. Khi sửa giao diện chung trong `runner.py`, mở PR nhỏ sớm để tránh hai người sửa cùng một file lâu ngày.
-
-```bash
-git clone https://github.com/VietUniverse/ips-wifi-research.git
-cd ips-wifi-research
-git switch feature/data-robustness     # thành viên 1
-# hoặc git switch feature/kan-mixer   # thành viên 2
-git pull --ff-only
-python -m unittest discover -s tests -v
-git add src tests configs
-git commit -m "Describe the change"
-git push
-```
-
-Không commit dữ liệu, checkpoint, token hoặc notebook chứa output lớn. Mỗi PR ghi rõ **split, seed, số mẫu, metric, baseline cùng giao thức**. Check GitHub Actions phải xanh trước khi merge. Khi có username của hai thành viên, chủ repo thêm quyền collaborator; việc tạo nhánh tự nó chưa cấp quyền đọc repo private.
 
 ## Nguồn dữ liệu
 
-[UCI UJIIndoorLoc](https://archive.ics.uci.edu/dataset/310/ujiindoorloc). Hai file CSV được tải trực tiếp từ nguồn này trong notebook Colab. Repo chỉ chứa mã nguồn và cấu hình.
+[UCI UJIIndoorLoc](https://archive.ics.uci.edu/dataset/310/ujiindoorloc). Colab tải CSV từ UCI nếu chưa có dữ liệu trong runtime.
