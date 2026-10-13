@@ -4,13 +4,50 @@ import json
 import io
 import subprocess
 import sys
+import tempfile
 import unittest
+import urllib.request
+import zipfile
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from types import ModuleType
+from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 
 class NotebookTests(unittest.TestCase):
+    def test_bad_token_stops_with_actionable_error(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        source = "".join(json.loads(path.read_text(encoding="utf-8"))["cells"][1]["source"])
+        google, colab = ModuleType("google"), ModuleType("google.colab")
+        files, userdata = ModuleType("google.colab.files"), ModuleType("google.colab.userdata")
+        files.upload = Mock()
+        userdata.get = Mock(return_value="invalid-secret")
+        colab.files, colab.userdata, google.colab = files, userdata, colab
+        with tempfile.TemporaryDirectory() as temp:
+            source = source.replace('root = Path("/content/repo_source")',
+                                    f"root = Path({temp!r}) / 'download'")
+            failure = HTTPError("https://api.github.com", 401, "Unauthorized", None, None)
+            with patch.dict(sys.modules, {"google": google, "google.colab": colab,
+                                          "google.colab.files": files,
+                                          "google.colab.userdata": userdata}), \
+                 patch("urllib.request.urlopen", side_effect=failure), \
+                 redirect_stdout(io.StringIO()):
+                namespace = {}
+                with self.assertRaisesRegex(RuntimeError, "HTTP 401.*Contents: read"):
+                    exec(compile(source, "shared bootstrap", "exec"), namespace)
+            files.upload.assert_not_called()
+
+    def test_bootstrap_scans_all_feature_branches_and_merges_new_plugins(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        setup = "".join(cells[1]["source"])
+        self.assertIn('extract_branch("main", root)', setup)
+        self.assertIn('startswith("feature/")', setup)
+        self.assertIn('src", "ips", "algorithms"', setup)
+        self.assertIn('"data", "preprocessors")', setup)
+        self.assertIn('target.exists()', setup)
+
     def test_shared_colab_code_cells_compile_and_are_clean(self):
         path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
         notebook = json.loads(path.read_text(encoding="utf-8"))

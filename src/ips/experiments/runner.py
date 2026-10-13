@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import random
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -75,10 +76,12 @@ def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5)
     best, best_state, best_epoch, stale = float("inf"), None, 0, 0
     history = []
+    print(f"{stage_name}: start {epochs} epochs, {len(loader)} batches/epoch on {device}", flush=True)
     for epoch in range(1, epochs + 1):
         model.train()
         total = 0.0
-        for xb, yb in loader:
+        started = time.perf_counter()
+        for batch_index, (xb, yb) in enumerate(loader, 1):
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad(set_to_none=True)
             loss = coordinate_loss(model(xb), yb)
@@ -88,6 +91,9 @@ def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr
             nn.utils.clip_grad_norm_(params, 5.0)
             optimizer.step()
             total += loss.item() * len(xb)
+            if epoch == 1 and (batch_index == 1 or batch_index % max(1, len(loader) // 4) == 0):
+                print(f"{stage_name} epoch 1: batch {batch_index}/{len(loader)}, "
+                      f"{time.perf_counter() - started:.1f}s", flush=True)
         pred_val = scaler.inverse_transform(_predict(model, x_val, device).astype(np.float64))
         score = mean_error(y_val, pred_val)
         scheduler.step(score)
@@ -98,7 +104,8 @@ def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr
         else:
             stale += 1
         if epoch == 1 or epoch % 5 == 0:
-            print(f"{stage_name} {epoch:03d}: train={total / len(loader.dataset):.4f} val={score:.3f} m")
+            print(f"{stage_name} {epoch:03d}: train={total / len(loader.dataset):.4f} "
+                  f"val={score:.3f} m elapsed={time.perf_counter() - started:.1f}s", flush=True)
         if stale >= patience:
             break
     if best_state is None:
@@ -149,10 +156,12 @@ def _fit_mixer(model, data, scaler, config, device):
     best = mean_error(data.y_val, base_val)
     best_state, best_alpha, best_epoch, stale = None, 0.0, 0, 0
     history = []
+    print(f"mixer: start {config.mixer_epochs} epochs, {len(loader)} batches/epoch on {device}", flush=True)
     for epoch in range(1, config.mixer_epochs + 1):
         mixer.train()
         total = 0.0
-        for rss, feat, base, y in loader:
+        started = time.perf_counter()
+        for batch_index, (rss, feat, base, y) in enumerate(loader, 1):
             rss, feat, base, y = (v.to(device) for v in (rss, feat, base, y))
             optimizer.zero_grad(set_to_none=True)
             loss = coordinate_loss(base + mixer(rss, feat), y)
@@ -160,6 +169,9 @@ def _fit_mixer(model, data, scaler, config, device):
             nn.utils.clip_grad_norm_(mixer.parameters(), 5.0)
             optimizer.step()
             total += loss.item() * len(rss)
+            if epoch == 1 and (batch_index == 1 or batch_index % max(1, len(loader) // 4) == 0):
+                print(f"mixer epoch 1: batch {batch_index}/{len(loader)}, "
+                      f"{time.perf_counter() - started:.1f}s", flush=True)
         delta = _mixer_correction(mixer, data.x_val, val_feat, device)
         scores = {alpha: mean_error(data.y_val, scaler.inverse_transform(
             val_base.numpy().astype(np.float64) + alpha * delta))
@@ -173,7 +185,8 @@ def _fit_mixer(model, data, scaler, config, device):
         else:
             stale += 1
         if epoch == 1 or epoch % 5 == 0:
-            print(f"mixer {epoch:03d}: train={total / len(loader.dataset):.4f} val={val:.3f} m alpha={alpha}")
+            print(f"mixer {epoch:03d}: train={total / len(loader.dataset):.4f} "
+                  f"val={val:.3f} m alpha={alpha} elapsed={time.perf_counter() - started:.1f}s", flush=True)
         if stale >= config.mixer_patience:
             break
     if best_state is not None:
@@ -204,6 +217,8 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
     for building in config.buildings:
         data = make_building_data(train, test, building, config.val_size, config.seed,
                                   config.preprocess, config.preprocess_params)
+        print(f"building {building}: train={len(data.x_train)} val={len(data.x_val)} "
+              f"test={len(data.x_test)} features={data.x_train.shape[1]} device={device}", flush=True)
         if config.with_mixer and data.x_train.shape[1] != 520:
             raise ValueError("Residual Mixer currently requires 520 AP features; choose rss_standard")
         folder = output / f"building_{building}"
