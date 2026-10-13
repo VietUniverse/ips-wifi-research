@@ -55,7 +55,7 @@ Các bộ tiền xử lý hiện có tùy theo nhánh tải được:
 - `rss_row_rank`: thay RSS phát hiện được bằng thứ hạng AP trong từng fingerprint, ít nhạy với dịch chuyển gain đơn điệu của thiết bị.
 - `rss_ap_robust`: scale từng AP theo quantile fit trên train; AP ít quan sát/ít biến thiên có thể được mask thành missing nhưng vẫn giữ nguyên 520 cột cho Mixer.
 
-Ba cách xử lý cuối cùng là các thử nghiệm đối chứng, không mặc định tốt hơn `rss_standard`. Chọn preset `bsrbf_mixer_global_relative.json`, `bsrbf_mixer_row_rank.json` hoặc `bsrbf_mixer_ap_robust.json` để chạy cùng BSRBF-KAN + residual Mixer. Preset Mixer cũng bật sampling cân bằng vị trí và tăng device augmentation; kiểm tra validation trước khi xem official test. Thống kê AP chỉ fit trên train nội bộ. Cần merge thay đổi runner và notebook vào `main` trước khi Colab tải được các trường cấu hình mới.
+Ba cách xử lý cuối cùng là các thử nghiệm đối chứng, không mặc định tốt hơn `rss_standard`. Trong menu Colab, chọn **KAN-Mixer (BSRBF-KAN + Residual Mixer)**; notebook sẽ chỉ hiện các preset Mixer như `bsrbf_mixer_global_relative.json`, `bsrbf_mixer_row_rank.json` và `bsrbf_mixer_ap_robust.json`. Các preset bật sampling cân bằng vị trí và tăng device augmentation; kiểm tra validation trước khi xem official test. Thống kê AP chỉ fit trên train nội bộ. Cần merge thay đổi runner và notebook vào `main` trước khi Colab tải được các trường cấu hình mới.
 
 KNN/WKNN dùng runner riêng, còn MLP/BSRBF-KAN/SAE/CDAE dùng runner neural. Trong một lượt menu, chỉ chọn nhiều model cùng họ runner. Muốn so sánh KNN với model neural, chạy hai lượt riêng trên cùng giao thức và so sánh kết quả xuất ra. Preset `bsrbf_residual_mixer.json` yêu cầu `bsrbf_kan`, `rss_standard` và đủ 520 AP.
 
