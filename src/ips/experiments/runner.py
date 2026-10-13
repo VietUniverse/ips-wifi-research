@@ -121,7 +121,7 @@ def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr
 @torch.no_grad()
 def _features_and_baseline(model, x, device, batch_size=256):
     if not hasattr(model, "layers"):
-        raise ValueError("Residual Mixer requires a BSRBF-KAN backbone")
+        raise ValueError("Residual Mixer requires a KAN backbone with layers")
     model.eval()
     feats, base = [], []
     for start in range(0, len(x), batch_size):
@@ -154,7 +154,7 @@ def _fit_mixer(model, data, scaler, config, device):
     target = torch.as_tensor(scaler.transform(data.y_train), dtype=torch.float32)
     loader = DataLoader(TensorDataset(torch.as_tensor(data.x_train), train_feat, train_base, target),
                         batch_size=128, shuffle=True)
-    mixer = ResidualKANMixer().to(device)
+    mixer = ResidualKANMixer(family=config.model).to(device)
     optimizer = torch.optim.AdamW(mixer.parameters(), lr=3e-4, weight_decay=1e-5)
     base_val = scaler.inverse_transform(val_base.numpy().astype(np.float64))
     best = mean_error(data.y_val, base_val)
@@ -203,8 +203,9 @@ def _fit_mixer(model, data, scaler, config, device):
 
 
 def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
-    if config.with_mixer and config.model != "bsrbf_kan":
-        raise ValueError("with_mixer requires model=bsrbf_kan")
+    kan_families = {"kan", "fastkan", "bsrbf_kan", "skan", "fckan"}
+    if config.with_mixer and config.model not in kan_families:
+        raise ValueError(f"with_mixer requires a KAN model; choose one of {sorted(kan_families)}")
     output = Path(output_dir)
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Output directory must be new or empty: {output}")
