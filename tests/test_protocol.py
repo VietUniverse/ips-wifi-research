@@ -75,6 +75,26 @@ class ProtocolTests(unittest.TestCase):
                                   preprocess_params={"min_observations": 2})
         self.assertEqual(data.feature_columns, ["WAP001"])
 
+    def test_mixer_normalizations_preserve_520_ap_and_missing_mask(self):
+        frame = _frame(12, 1)
+        frame.loc[:, "WAP001"] = np.linspace(-90, -50, len(frame)).astype(np.float32)
+        frame.loc[:5, "WAP002"] = -70.0  # flat/low-information AP should be maskable
+        for name in ("rss_global_relative", "rss_row_rank", "rss_ap_robust"):
+            processor = create_preprocessor(name).fit(frame.iloc[:8])
+            result = processor.transform(frame.iloc[8:])
+            self.assertEqual(result.shape, (4, 520))
+            self.assertEqual(result.dtype, np.float32)
+            self.assertTrue(np.all(result[:, 2:] == -1.0))
+            self.assertTrue(np.all(np.isfinite(result)))
+
+    def test_location_balancing_and_augmentation_are_configurable(self):
+        self.assertTrue(RunConfig(balance_locations=True).balance_locations)
+        dataset = DeviceAugmentedRSSDataset(np.zeros((3, 520), np.float32),
+                                            np.zeros((3, 2), np.float32),
+                                            gain_std=0.2, noise_std=0.1,
+                                            dropout_prob=0.15)
+        self.assertEqual(len(dataset), 3)
+
     def test_runner_accepts_discovered_preprocessor(self):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)

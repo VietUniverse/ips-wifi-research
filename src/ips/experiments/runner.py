@@ -15,7 +15,7 @@ import torch
 from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 
 from ips.algorithms.factory import create_model
 from ips.algorithms.residual_mixer import ResidualKANMixer
@@ -38,6 +38,10 @@ class RunConfig:
     mixer_epochs: int = 40
     mixer_patience: int = 12
     with_mixer: bool = False
+    balance_locations: bool = False
+    augment_gain_std: float = 0.10
+    augment_noise_std: float = 0.05
+    augment_dropout_prob: float = 0.06
     device: str = "auto"
 
 
@@ -220,7 +224,7 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
         print(f"building {building}: train={len(data.x_train)} val={len(data.x_val)} "
               f"test={len(data.x_test)} features={data.x_train.shape[1]} device={device}", flush=True)
         if config.with_mixer and data.x_train.shape[1] != 520:
-            raise ValueError("Residual Mixer currently requires 520 AP features; choose rss_standard")
+            raise ValueError("Residual Mixer currently requires 520 AP features; choose a 520-AP preprocessor")
         folder = output / f"building_{building}"
         folder.mkdir()
         pd.DataFrame({"source_row": np.r_[data.train_rows, data.val_rows],
@@ -228,8 +232,20 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
             .to_csv(folder / "split.csv", index=False)
         scaler = StandardScaler().fit(data.y_train)
         y_norm = scaler.transform(data.y_train).astype(np.float32)
-        train_loader = DataLoader(DeviceAugmentedRSSDataset(data.x_train, y_norm),
-                                  batch_size=config.batch_size, shuffle=True)
+        train_dataset = DeviceAugmentedRSSDataset(
+            data.x_train, y_norm, gain_std=config.augment_gain_std,
+            noise_std=config.augment_noise_std, dropout_prob=config.augment_dropout_prob)
+        sampler = None
+        if config.balance_locations:
+            local_train = train.loc[data.train_rows]
+            groups = (local_train.FLOOR.astype(str) + "_"
+                      + local_train.LONGITUDE.round(1).astype(str) + "_"
+                      + local_train.LATITUDE.round(1).astype(str)).to_numpy()
+            _, inverse, counts = np.unique(groups, return_inverse=True, return_counts=True)
+            weights = torch.as_tensor(1.0 / counts[inverse], dtype=torch.double)
+            sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+        train_loader = DataLoader(train_dataset, batch_size=config.batch_size,
+                                  shuffle=sampler is None, sampler=sampler)
         model = create_model(config.model, data.x_train.shape[1]).to(device)
         history = []
         if config.model == "bsrbf_kan" and config.stage1_epochs:

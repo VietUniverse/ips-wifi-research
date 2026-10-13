@@ -51,6 +51,11 @@ Các bộ tiền xử lý hiện có tùy theo nhánh tải được:
 - `rss_standard`: chuẩn hóa RSSI, giữ AP không phát hiện theo quy ước của repo.
 - `ap_frequency`: lọc AP theo số lần xuất hiện trong tập train.
 - `rss_powed`: biến đổi RSS theo lũy thừa, được thêm từ nhánh KNN/WKNN.
+- `rss_global_relative`: trộn mức RSS chuẩn hóa toàn cục với RSS tương đối so với median của từng fingerprint.
+- `rss_row_rank`: thay RSS phát hiện được bằng thứ hạng AP trong từng fingerprint, ít nhạy với dịch chuyển gain đơn điệu của thiết bị.
+- `rss_ap_robust`: scale từng AP theo quantile fit trên train; AP ít quan sát/ít biến thiên có thể được mask thành missing nhưng vẫn giữ nguyên 520 cột cho Mixer.
+
+Ba cách xử lý cuối cùng là các thử nghiệm đối chứng, không mặc định tốt hơn `rss_standard`. Trong menu Colab, chọn **KAN-Mixer (BSRBF-KAN + Residual Mixer)**; notebook sẽ chỉ hiện các preset Mixer như `bsrbf_mixer_global_relative.json`, `bsrbf_mixer_row_rank.json` và `bsrbf_mixer_ap_robust.json`. Các preset bật sampling cân bằng vị trí và tăng device augmentation; kiểm tra validation trước khi xem official test. Thống kê AP chỉ fit trên train nội bộ. Cần merge thay đổi runner và notebook vào `main` trước khi Colab tải được các trường cấu hình mới.
 
 KNN/WKNN dùng runner riêng, còn MLP/BSRBF-KAN/SAE/CDAE dùng runner neural. Trong một lượt menu, chỉ chọn nhiều model cùng họ runner. Muốn so sánh KNN với model neural, chạy hai lượt riêng trên cùng giao thức và so sánh kết quả xuất ra. Preset `bsrbf_residual_mixer.json` yêu cầu `bsrbf_kan`, `rss_standard` và đủ 520 AP.
 
@@ -104,6 +109,7 @@ Thêm module trong `src/ips/data/preprocessors/` khai báo `PREPROCESS_NAME` và
 - Mỗi model được huấn luyện riêng theo tòa và giả định biết `BUILDINGID` khi suy luận.
 - Metric vị trí chính là mean Euclidean distance (m); báo thêm median, P90 và tỷ lệ sai số không quá 5 m.
 - Official test đã được sử dụng trong các thử nghiệm trước đây. Cải thiện được chọn dựa trên cùng tập này là kết quả phát triển, không phải đánh giá độc lập mới.
+- UJI có lệch thiết bị giữa train và official test; so sánh PHONEID có thể dùng để chẩn đoán domain shift, nhưng không dùng nhãn/metric official test để chọn chuẩn hóa hay checkpoint.
 
 Runner hiện tại không nhất thiết tái hiện chính xác các con số từ notebook lịch sử; cần ghi rõ checkpoint, seed và giao thức khi so sánh.
 
