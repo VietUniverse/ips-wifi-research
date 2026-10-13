@@ -46,7 +46,19 @@ class NotebookTests(unittest.TestCase):
         self.assertIn('startswith("feature/")', setup)
         self.assertIn('src", "ips", "algorithms"', setup)
         self.assertIn('"data", "preprocessors")', setup)
+        self.assertIn('"dataset_adapters.py"', setup)
         self.assertIn('target.exists()', setup)
+
+    def test_colab_dataset_menu_offers_uji_and_zip_datasets(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        data_setup = "".join(cells[2]["source"])
+        self.assertIn("UJIIndoorLoc (UCI)", data_setup)
+        self.assertIn("PACK_DATASETS", data_setup)
+        self.assertIn("files.upload()", data_setup)
+        run_cell = "".join(cells[5]["source"])
+        self.assertIn("settings['buildings'] = [0]", run_cell)
+        self.assertIn("str(selected_config)", run_cell)
 
     def test_shared_colab_code_cells_compile_and_are_clean(self):
         path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
