@@ -67,8 +67,10 @@ class NotebookTests(unittest.TestCase):
         self.assertIn("pack_zip_bytes = zip_path.read_bytes()", data_setup)
         self.assertIn("saved_zip.write_bytes(uploaded[uploaded_name])", data_setup)
         run_cell = "".join(cells[5]["source"])
-        self.assertIn("settings['buildings'] = [0]", run_cell)
+        self.assertIn('settings["buildings"] = [0]', run_cell)
         self.assertIn("str(selected_config)", run_cell)
+        self.assertIn('if "dataset_runs" not in globals() or not dataset_runs:', run_cell)
+        self.assertNotIn("if dataset_key != 'ujiindoorloc':", run_cell)
 
     def test_shared_colab_code_cells_compile_and_are_clean(self):
         path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
