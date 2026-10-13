@@ -163,9 +163,12 @@ class NotebookTests(unittest.TestCase):
                                 "preprocessors": ["rss_standard"]})
         namespace = {"project": path.parents[1], "Path": Path,
                      "subprocess": subprocess, "sys": sys}
-        # Display order: Neural, bsrbf_kan, KAN-Mixer, mlp, then RSS/preset/params.
+        available_ids = ["bsrbf_kan", "mlp", "kan", "fastkan", "skan", "fckan",
+                         "kan_mixer", "kan_spline_mixer", "fastkan_mixer",
+                         "skan_mixer", "fckan_mixer"]
+        mixer_choice = sorted(available_ids).index("kan_mixer") + 1
         with patch.object(subprocess, "check_output", return_value=available), \
-             patch("builtins.input", side_effect=["1", "2", "1", "1", ""]) as ask, \
+             patch("builtins.input", side_effect=["1", str(mixer_choice), "1", "1", ""]) as ask, \
              redirect_stdout(io.StringIO()) as output:
             exec(menu, namespace)
         self.assertEqual(namespace["selected_models"], ["kan_mixer"])
