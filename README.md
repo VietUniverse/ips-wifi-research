@@ -1,6 +1,6 @@
 # Định vị trong nhà bằng WiFi RSSI
 
-Repo này chứa pipeline thí nghiệm UJIIndoorLoc: tải dữ liệu, tiền xử lý RSSI, huấn luyện model, đánh giá theo từng tòa và xuất biểu đồ/bảng kết quả. Colab dùng mã nền từ `main` và tự lấy plugin mới từ các nhánh `feature/*` trên GitHub; không cần tạo nhánh tích hợp hay chép code thủ công giữa các nhánh.
+Repo này chứa pipeline WiFi fingerprinting cho UJIIndoorLoc và các bộ benchmark khác: chọn dataset, chuẩn hóa RSSI, huấn luyện model và xuất biểu đồ/bảng kết quả. Colab dùng mã nền từ `main` và tự lấy plugin mới từ các nhánh `feature/*` trên GitHub; không cần tạo nhánh tích hợp hay chép code thủ công giữa các nhánh.
 
 ## Chạy trên Google Colab
 
@@ -18,6 +18,20 @@ Notebook cần đọc `main` và các nhánh `feature/*` qua GitHub API. Trong C
 4. Chạy lại ô đầu sau khi cập nhật secret.
 
 Nếu nhận HTTP 401, token sai/hết hạn hoặc thiếu quyền đọc. HTTP 404 thường có nghĩa token chưa được cấp cho repo private hoặc sai tên repo. Notebook báo rõ lỗi và không in token.
+
+### Chọn dataset
+
+Ở cell dữ liệu đầu notebook, chọn `UJIIndoorLoc (UCI)` để tải UJI, hoặc chọn một bộ trong ZIP research pack. Với lựa chọn từ ZIP, upload file `drive-download-...zip` khi Colab mở hộp thoại. ZIP được đọc và chuyển đổi trong runtime; repo chỉ chứa adapter, không chứa bản dữ liệu thô.
+
+| Dataset trong ZIP | Train | Test | AP gốc |
+|---|---:|---:|---:|
+| HCXY (SODIndoorLoc) | 11,370 | 860 | 347 |
+| SYL (SODIndoorLoc) | 8,880 | 1,020 | 363 |
+| TUJI1 | 6,752 | 2,147 | 310 |
+| HUS (test case 1 hoặc 2) | 20,500 | 205 | 5 |
+| DLULIB | 13,000 | 6,500 | 17 |
+
+Số dòng lấy từ ZIP bạn cung cấp. Dataset có ít hơn 520 AP được đệm bằng giá trị missing để tương thích với KAN-Mixer; với HUS và DLULIB, đầu vào thực chỉ có 5 hoặc 17 AP nên cần diễn giải riêng. UJI_LIB_DB chưa được đưa vào menu: ZIP có 620 AP và chưa có mô tả đủ rõ về đơn vị tọa độ để so sánh sai số theo mét. CETC331 không có trong ZIP này. Không gộp sai số trung bình giữa các dataset khác nhau.
 
 ### 3. Notebook hợp nhất mã plugin
 
