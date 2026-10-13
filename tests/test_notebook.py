@@ -104,6 +104,39 @@ class NotebookTests(unittest.TestCase):
             self.assertEqual(report["within_5m_pct"].tolist(), [100.0, 50.0])
             self.assertTrue((model_dir / "floor_metrics.csv").exists())
 
+    def test_dataset_comparison_allows_independent_test_sets(self):
+        import ast
+        import pandas as pd
+
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        source = "".join(cells[5]["source"])
+        tree = ast.parse(source)
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "compare_dataset_runs")
+        namespace = {"Path": Path, "display": lambda value: None}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "dataset comparison", "exec"), namespace)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            records = []
+            for dataset, errors in (("UJI", [1.0, 4.0]), ("DLULIB", [2.0, 3.0, 9.0])):
+                output = root / dataset
+                building = output / "building_0"
+                building.mkdir(parents=True)
+                pd.DataFrame({"error_m": errors}).to_csv(building / "predictions.csv", index=False)
+                records.append({"dataset_label": dataset, "output_dir": output,
+                                "model_label": "MLP"})
+            with redirect_stdout(io.StringIO()):
+                report = namespace["compare_dataset_runs"](records, root / "comparison")
+
+            self.assertEqual(report.dataset.tolist(), ["DLULIB", "UJI"])
+            self.assertEqual(report.n_test.tolist(), [3, 2])
+            self.assertEqual(report.mean_m.tolist(), [14 / 3, 2.5])
+            self.assertTrue((root / "comparison" / "dataset_comparison_metrics.csv").exists())
+            self.assertTrue((root / "comparison" / "dataset_comparison_mean_error.png").exists())
+            self.assertTrue((root / "comparison" / "dataset_comparison_cdf.png").exists())
+
     def test_model_menu_waits_for_explicit_selection(self):
         path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
         cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
