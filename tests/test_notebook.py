@@ -56,6 +56,8 @@ class NotebookTests(unittest.TestCase):
         data_setup = "".join(cells[2]["source"])
         self.assertIn("UJIIndoorLoc (UCI)", data_setup)
         self.assertIn("PACK_DATASETS", data_setup)
+        self.assertIn('dataset_raw.lower() == "all"', data_setup)
+        self.assertIn("list(range(1, len(dataset_options) + 1))", data_setup)
         self.assertIn("files.upload()", data_setup)
         self.assertIn('drive.mount("/content/drive")', data_setup)
         self.assertIn('Path("/content/drive/MyDrive/ips-data")', data_setup)
