@@ -1,6 +1,6 @@
 # Định vị trong nhà bằng WiFi RSSI
 
-Repo này chứa pipeline thí nghiệm UJIIndoorLoc: tải dữ liệu, tiền xử lý RSSI, huấn luyện model, đánh giá theo từng tòa và xuất biểu đồ/bảng kết quả. Colab dùng mã nền từ `main` và tự lấy plugin mới từ các nhánh `feature/*` trên GitHub; không cần tạo nhánh tích hợp hay chép code thủ công giữa các nhánh.
+Repo này chứa pipeline WiFi fingerprinting cho UJIIndoorLoc và các bộ benchmark khác: chọn dataset, chuẩn hóa RSSI, huấn luyện model và xuất biểu đồ/bảng kết quả. Colab dùng mã nền từ `main` và tự lấy plugin mới từ các nhánh `feature/*` trên GitHub; không cần tạo nhánh tích hợp hay chép code thủ công giữa các nhánh.
 
 ## Chạy trên Google Colab
 
@@ -18,6 +18,20 @@ Notebook cần đọc `main` và các nhánh `feature/*` qua GitHub API. Trong C
 4. Chạy lại ô đầu sau khi cập nhật secret.
 
 Nếu nhận HTTP 401, token sai/hết hạn hoặc thiếu quyền đọc. HTTP 404 thường có nghĩa token chưa được cấp cho repo private hoặc sai tên repo. Notebook báo rõ lỗi và không in token.
+
+### Chọn dataset
+
+Ở cell dữ liệu đầu notebook, chọn `UJIIndoorLoc (UCI)` để tải UJI, hoặc chọn một bộ trong ZIP research pack. Với lựa chọn từ ZIP, upload file `drive-download-...zip` khi Colab mở hộp thoại. ZIP được đọc và chuyển đổi trong runtime; repo chỉ chứa adapter, không chứa bản dữ liệu thô.
+
+| Dataset trong ZIP | Train | Test | AP gốc |
+|---|---:|---:|---:|
+| HCXY (SODIndoorLoc) | 11,370 | 860 | 347 |
+| SYL (SODIndoorLoc) | 8,880 | 1,020 | 363 |
+| TUJI1 | 6,752 | 2,147 | 310 |
+| HUS (test case 1 hoặc 2) | 20,500 | 205 | 5 |
+| DLULIB | 13,000 | 6,500 | 17 |
+
+Số dòng lấy từ ZIP bạn cung cấp. Dataset có ít hơn 520 AP được đệm bằng giá trị missing để tương thích với KAN-Mixer; với HUS và DLULIB, đầu vào thực chỉ có 5 hoặc 17 AP nên cần diễn giải riêng. UJI_LIB_DB chưa được đưa vào menu: ZIP có 620 AP và chưa có mô tả đủ rõ về đơn vị tọa độ để so sánh sai số theo mét. CETC331 không có trong ZIP này. Không gộp sai số trung bình giữa các dataset khác nhau.
 
 ### 3. Notebook hợp nhất mã plugin
 
@@ -51,6 +65,11 @@ Các bộ tiền xử lý hiện có tùy theo nhánh tải được:
 - `rss_standard`: chuẩn hóa RSSI, giữ AP không phát hiện theo quy ước của repo.
 - `ap_frequency`: lọc AP theo số lần xuất hiện trong tập train.
 - `rss_powed`: biến đổi RSS theo lũy thừa, được thêm từ nhánh KNN/WKNN.
+- `rss_global_relative`: trộn mức RSS chuẩn hóa toàn cục với RSS tương đối so với median của từng fingerprint.
+- `rss_row_rank`: thay RSS phát hiện được bằng thứ hạng AP trong từng fingerprint, ít nhạy với dịch chuyển gain đơn điệu của thiết bị.
+- `rss_ap_robust`: scale từng AP theo quantile fit trên train; AP ít quan sát/ít biến thiên có thể được mask thành missing nhưng vẫn giữ nguyên 520 cột cho Mixer.
+
+Ba cách xử lý cuối cùng là các thử nghiệm đối chứng, không mặc định tốt hơn `rss_standard`. Trong menu Colab, chọn **KAN-Mixer (BSRBF-KAN + Residual Mixer)**; notebook sẽ chỉ hiện các preset Mixer như `bsrbf_mixer_global_relative.json`, `bsrbf_mixer_row_rank.json` và `bsrbf_mixer_ap_robust.json`. Các preset bật sampling cân bằng vị trí và tăng device augmentation; kiểm tra validation trước khi xem official test. Thống kê AP chỉ fit trên train nội bộ. Cần merge thay đổi runner và notebook vào `main` trước khi Colab tải được các trường cấu hình mới.
 
 KNN/WKNN dùng runner riêng, còn MLP/BSRBF-KAN/SAE/CDAE dùng runner neural. Trong một lượt menu, chỉ chọn nhiều model cùng họ runner. Muốn so sánh KNN với model neural, chạy hai lượt riêng trên cùng giao thức và so sánh kết quả xuất ra. Preset `bsrbf_residual_mixer.json` yêu cầu `bsrbf_kan`, `rss_standard` và đủ 520 AP.
 
@@ -104,6 +123,7 @@ Thêm module trong `src/ips/data/preprocessors/` khai báo `PREPROCESS_NAME` và
 - Mỗi model được huấn luyện riêng theo tòa và giả định biết `BUILDINGID` khi suy luận.
 - Metric vị trí chính là mean Euclidean distance (m); báo thêm median, P90 và tỷ lệ sai số không quá 5 m.
 - Official test đã được sử dụng trong các thử nghiệm trước đây. Cải thiện được chọn dựa trên cùng tập này là kết quả phát triển, không phải đánh giá độc lập mới.
+- UJI có lệch thiết bị giữa train và official test; so sánh PHONEID có thể dùng để chẩn đoán domain shift, nhưng không dùng nhãn/metric official test để chọn chuẩn hóa hay checkpoint.
 
 Runner hiện tại không nhất thiết tái hiện chính xác các con số từ notebook lịch sử; cần ghi rõ checkpoint, seed và giao thức khi so sánh.
 

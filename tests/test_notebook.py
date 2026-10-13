@@ -2,6 +2,7 @@
 
 import json
 import io
+import ast
 import subprocess
 import sys
 import tempfile
@@ -46,7 +47,19 @@ class NotebookTests(unittest.TestCase):
         self.assertIn('startswith("feature/")', setup)
         self.assertIn('src", "ips", "algorithms"', setup)
         self.assertIn('"data", "preprocessors")', setup)
+        self.assertIn('"dataset_adapters.py"', setup)
         self.assertIn('target.exists()', setup)
+
+    def test_colab_dataset_menu_offers_uji_and_zip_datasets(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        data_setup = "".join(cells[2]["source"])
+        self.assertIn("UJIIndoorLoc (UCI)", data_setup)
+        self.assertIn("PACK_DATASETS", data_setup)
+        self.assertIn("files.upload()", data_setup)
+        run_cell = "".join(cells[5]["source"])
+        self.assertIn("settings['buildings'] = [0]", run_cell)
+        self.assertIn("str(selected_config)", run_cell)
 
     def test_shared_colab_code_cells_compile_and_are_clean(self):
         path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
@@ -58,6 +71,72 @@ class NotebookTests(unittest.TestCase):
                 self.assertEqual(cell["outputs"], [])
                 compile("".join(cell["source"]), f"notebook cell {index}", "exec")
 
+    def test_floor_error_export_uses_ground_truth_floor_for_neural_and_knn(self):
+        import pandas as pd
+
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        run_cell = "".join(cells[5]["source"])
+        tree = ast.parse(run_cell)
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "export_floor_metrics")
+        namespace = {"Path": Path, "display": lambda value: None}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "floor metrics", "exec"), namespace)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = root / "data"
+            model_dir = root / "mlp"
+            building_dir = model_dir / "building_0"
+            data.mkdir()
+            building_dir.mkdir(parents=True)
+            pd.DataFrame({"FLOOR": [0, 0, 1, 1]}).to_csv(
+                data / "validationData.csv", index=False)
+            pd.DataFrame({"source_row": [0, 1, 2, 3], "error_m": [1.0, 3.0, 2.0, 10.0]}).to_csv(
+                building_dir / "predictions.csv", index=False)
+            with redirect_stdout(io.StringIO()):
+                report = namespace["export_floor_metrics"](model_dir, data)
+
+            self.assertEqual(report["model"].tolist(), ["mlp", "mlp"])
+            self.assertEqual(report["floor"].tolist(), [0, 1])
+            self.assertEqual(report["n_test"].tolist(), [2, 2])
+            self.assertEqual(report["mean_m"].tolist(), [2.0, 6.0])
+            self.assertEqual(report["within_5m_pct"].tolist(), [100.0, 50.0])
+            self.assertTrue((model_dir / "floor_metrics.csv").exists())
+
+    def test_dataset_comparison_allows_independent_test_sets(self):
+        import ast
+        import pandas as pd
+
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        source = "".join(cells[5]["source"])
+        tree = ast.parse(source)
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "compare_dataset_runs")
+        namespace = {"Path": Path, "display": lambda value: None}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "dataset comparison", "exec"), namespace)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            records = []
+            for dataset, errors in (("UJI", [1.0, 4.0]), ("DLULIB", [2.0, 3.0, 9.0])):
+                output = root / dataset
+                building = output / "building_0"
+                building.mkdir(parents=True)
+                pd.DataFrame({"error_m": errors}).to_csv(building / "predictions.csv", index=False)
+                records.append({"dataset_label": dataset, "output_dir": output,
+                                "model_label": "MLP"})
+            with redirect_stdout(io.StringIO()):
+                report = namespace["compare_dataset_runs"](records, root / "comparison")
+
+            self.assertEqual(report.dataset.tolist(), ["DLULIB", "UJI"])
+            self.assertEqual(report.n_test.tolist(), [3, 2])
+            self.assertEqual(report.mean_m.tolist(), [14 / 3, 2.5])
+            self.assertTrue((root / "comparison" / "dataset_comparison_metrics.csv").exists())
+            self.assertTrue((root / "comparison" / "dataset_comparison_mean_error.png").exists())
+            self.assertTrue((root / "comparison" / "dataset_comparison_cdf.png").exists())
+
     def test_model_menu_waits_for_explicit_selection(self):
         path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
         cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
@@ -68,9 +147,29 @@ class NotebookTests(unittest.TestCase):
         available = json.dumps({"models": ["mlp", "bsrbf_kan"],
                                 "preprocessors": ["rss_standard"]})
         with patch.object(subprocess, "check_output", return_value=available), \
-             patch("builtins.input", side_effect=["1", "2", "1", "1", ""]) as ask, \
+             patch("builtins.input", side_effect=["1", "1", "1", "1", ""]) as ask, \
              redirect_stdout(io.StringIO()):
             exec(menu, namespace)
         self.assertEqual(namespace["selected_models"], ["bsrbf_kan"])
         self.assertEqual(namespace["selected_family"], "Neural")
+        self.assertEqual(ask.call_count, 5)
+
+    def test_kan_mixer_is_an_explicit_menu_choice_with_mixer_presets(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        menu = next("".join(c["source"]) for c in cells if c["cell_type"] == "code"
+                    and "selected_family = choose_one" in "".join(c["source"]))
+        available = json.dumps({"models": ["bsrbf_kan", "mlp"],
+                                "preprocessors": ["rss_standard"]})
+        namespace = {"project": path.parents[1], "Path": Path,
+                     "subprocess": subprocess, "sys": sys}
+        # Display order: Neural, bsrbf_kan, KAN-Mixer, mlp, then RSS/preset/params.
+        with patch.object(subprocess, "check_output", return_value=available), \
+             patch("builtins.input", side_effect=["1", "2", "1", "1", ""]) as ask, \
+             redirect_stdout(io.StringIO()) as output:
+            exec(menu, namespace)
+        self.assertEqual(namespace["selected_models"], ["kan_mixer"])
+        self.assertTrue(json.loads((namespace["project"] / namespace["selected_preset"])
+                                   .read_text())["with_mixer"])
+        self.assertIn("KAN-Mixer (BSRBF-KAN + Residual Mixer)", output.getvalue())
         self.assertEqual(ask.call_count, 5)
