@@ -33,6 +33,14 @@ Nếu nhận HTTP 401, token sai/hết hạn hoặc thiếu quyền đọc. HTTP
 
 Số dòng lấy từ ZIP bạn cung cấp. Dataset có ít hơn 520 AP được đệm bằng giá trị missing để tương thích với KAN-Mixer; với HUS và DLULIB, đầu vào thực chỉ có 5 hoặc 17 AP nên cần diễn giải riêng. UJI_LIB_DB chưa được đưa vào menu: ZIP có 620 AP và chưa có mô tả đủ rõ về đơn vị tọa độ để so sánh sai số theo mét. CETC331 không có trong ZIP này. Không gộp sai số trung bình giữa các dataset khác nhau.
 
+### Các model KAN theo bài KSE 2025
+
+Notebook cung cấp năm họ kiến trúc được bài báo so sánh: KAN gốc, FastKAN, BSRBF-KAN, S-KAN và FC-KAN. KAN-Mixer là mở rộng thử nghiệm của repo: giữ nhánh sửa residual Mixer và dùng cùng họ KAN đã chọn làm backbone cũng như token/channel mixer. Chọn model đơn để chạy riêng; các biến thể có Mixer được đặt tên rõ trong menu và cần preset có `with_mixer: true`.
+
+Bài báo gốc: [KSE 2025 proceedings](https://kse2025.kse-conferences.org/wp-content/uploads/sites/10/2025/10/kse-2025-proceedings.pdf), bài “A Comparative Study of Kolmogorov-Arnold Network Models for Robust WiFi Fingerprinting-based Positioning”. Các layer trong repo được cài dựa trên mô tả kiến trúc trong bài báo: B-spline cho KAN, Gaussian RBF cho FastKAN, kết hợp hai basis cho BSRBF-KAN, cổng chọn theo node cho S-KAN, và tương tác tích cho FC-KAN ở tầng ẩn nhỏ để kiểm soát chi phí. Bài báo không cung cấp mã nguồn thực nghiệm đi kèm, vì vậy S-KAN/FC-KAN và các tổ hợp Mixer ở đây là các hiện thực nghiên cứu theo mô tả, không được khẳng định là tái tạo từng chi tiết mã gốc. Quy trình tối ưu của runner cũng là pipeline hiện có của repo, không phải sao chép nguyên xi protocol của bài báo.
+
+Các kết quả KAN-Mixer trước đây trong repo dùng BSRBF-KAN; menu tiếp tục giữ lựa chọn này dưới tên `KAN-Mixer (BSRBF-KAN + Residual Mixer)`. Có thêm `KAN-Mixer (KAN gốc / B-spline)`, FastKAN, S-KAN và FC-KAN + Mixer. Cần so sánh bằng cùng cách chia train/validation/test và báo cáo dữ liệu/preset/seed khi viết kết luận.
+
 ### 3. Notebook hợp nhất mã plugin
 
 Ô đầu tự động:
