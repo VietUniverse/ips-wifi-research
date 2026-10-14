@@ -179,6 +179,29 @@ class NotebookTests(unittest.TestCase):
         self.assertIn("KAN-Mixer (BSRBF-KAN + Residual Mixer)", output.getvalue())
         self.assertEqual(ask.call_count, 4)
 
+    def test_mixer_can_be_selected_alongside_its_plain_backbone(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        menu = next("".join(c["source"]) for c in cells if c["cell_type"] == "code"
+                    and "selected_family = choose_one" in "".join(c["source"]))
+        available = json.dumps({"models": ["bsrbf_kan", "mlp"],
+                                "preprocessors": ["rss_standard"]})
+        namespace = {"project": path.parents[1], "Path": Path,
+                     "subprocess": subprocess, "sys": sys}
+        with patch.object(subprocess, "check_output", return_value=available), \
+             patch("builtins.input", side_effect=["1", "1,7", "1", ""]), \
+             redirect_stdout(io.StringIO()):
+            exec(menu, namespace)
+
+        self.assertEqual(namespace["selected_models"], ["bsrbf_kan", "kan_mixer"])
+        mapping = namespace["selected_preset_map"]
+        plain = namespace["preset_settings"][mapping[("bsrbf_kan", "rss_standard")]]
+        mixed = namespace["preset_settings"][mapping[("kan_mixer", "rss_standard")]]
+        self.assertFalse(plain["with_mixer"])
+        self.assertTrue(mixed["with_mixer"])
+        run_cell = "".join(cells[5]["source"])
+        self.assertIn('settings["with_mixer"] = selected_model in mixer_model_bases', run_cell)
+
     def test_multiple_models_and_preprocessors_get_model_specific_presets(self):
         path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
         cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
