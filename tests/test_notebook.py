@@ -58,7 +58,7 @@ class NotebookTests(unittest.TestCase):
         self.assertIn("PACK_DATASETS", data_setup)
         self.assertIn("files.upload()", data_setup)
         run_cell = "".join(cells[5]["source"])
-        self.assertIn("settings['buildings'] = [0]", run_cell)
+        self.assertIn('settings["buildings"] = [0]', run_cell)
         self.assertIn("str(selected_config)", run_cell)
 
     def test_shared_colab_code_cells_compile_and_are_clean(self):
@@ -147,12 +147,14 @@ class NotebookTests(unittest.TestCase):
         available = json.dumps({"models": ["mlp", "bsrbf_kan"],
                                 "preprocessors": ["rss_standard"]})
         with patch.object(subprocess, "check_output", return_value=available), \
-             patch("builtins.input", side_effect=["1", "1", "1", "1", ""]) as ask, \
+             patch("builtins.input", side_effect=["1", "1", "1", ""]) as ask, \
              redirect_stdout(io.StringIO()):
             exec(menu, namespace)
         self.assertEqual(namespace["selected_models"], ["bsrbf_kan"])
         self.assertEqual(namespace["selected_family"], "Neural")
-        self.assertEqual(ask.call_count, 5)
+        self.assertEqual(namespace["selected_preprocesses"], ["rss_standard"])
+        self.assertIn(("bsrbf_kan", "rss_standard"), namespace["selected_preset_map"])
+        self.assertEqual(ask.call_count, 4)
 
     def test_kan_mixer_is_an_explicit_menu_choice_with_mixer_presets(self):
         path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
@@ -168,11 +170,50 @@ class NotebookTests(unittest.TestCase):
                          "skan_mixer", "fckan_mixer"]
         mixer_choice = sorted(available_ids).index("kan_mixer") + 1
         with patch.object(subprocess, "check_output", return_value=available), \
-             patch("builtins.input", side_effect=["1", str(mixer_choice), "1", "1", ""]) as ask, \
+             patch("builtins.input", side_effect=["1", str(mixer_choice), "1", ""]) as ask, \
              redirect_stdout(io.StringIO()) as output:
             exec(menu, namespace)
         self.assertEqual(namespace["selected_models"], ["kan_mixer"])
-        self.assertTrue(json.loads((namespace["project"] / namespace["selected_preset"])
-                                   .read_text())["with_mixer"])
+        preset = namespace["selected_preset_map"][("kan_mixer", "rss_standard")]
+        self.assertTrue(json.loads((namespace["project"] / preset).read_text())["with_mixer"])
         self.assertIn("KAN-Mixer (BSRBF-KAN + Residual Mixer)", output.getvalue())
-        self.assertEqual(ask.call_count, 5)
+        self.assertEqual(ask.call_count, 4)
+
+    def test_multiple_models_and_preprocessors_get_model_specific_presets(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        menu = next("".join(c["source"]) for c in cells if c["cell_type"] == "code"
+                    and "selected_family = choose_one" in "".join(c["source"]))
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp)
+            config_dir = project / "configs"
+            config_dir.mkdir()
+            for name, config in {
+                "kan_baseline.json": {"model": "kan", "with_mixer": False},
+                "cdae_cnn_ccpos_baseline.json": {
+                    "model": "cdae_cnn_ccpos", "with_mixer": False},
+                "cdae_cnn_ccpos_robust.json": {
+                    "model": "cdae_cnn_ccpos", "with_mixer": False,
+                    "preprocess": "rss_ap_robust", "preprocess_params": {"trim": 1}},
+            }.items():
+                (config_dir / name).write_text(json.dumps(config), encoding="utf-8")
+
+            available = json.dumps({
+                "models": ["cdae_cnn_ccpos", "fastkan", "mlp"],
+                "preprocessors": ["rss_standard", "rss_ap_robust"],
+            })
+            namespace = {"project": project, "Path": Path,
+                         "subprocess": subprocess, "sys": sys}
+            with patch.object(subprocess, "check_output", return_value=available), \
+                 patch("builtins.input", side_effect=["1", "2,3", "1,2", "", ""]), \
+                 redirect_stdout(io.StringIO()):
+                exec(menu, namespace)
+
+        self.assertEqual(namespace["selected_models"], ["cdae_cnn_ccpos", "fastkan"])
+        self.assertEqual(namespace["selected_preprocesses"],
+                         ["rss_standard", "rss_ap_robust"])
+        mapping = namespace["selected_preset_map"]
+        self.assertEqual(mapping[("cdae_cnn_ccpos", "rss_ap_robust")],
+                         "configs/cdae_cnn_ccpos_robust.json")
+        self.assertEqual(mapping[("fastkan", "rss_standard")], "configs/kan_baseline.json")
+        self.assertEqual(mapping[("fastkan", "rss_ap_robust")], "configs/kan_baseline.json")
