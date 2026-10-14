@@ -28,9 +28,9 @@ class SmallKANMixerBlock(nn.Module):
 
 
 class ResidualKANMixer(nn.Module):
-    def __init__(self, n_blocks=MIXER_BLOCKS, family="bsrbf_kan"):
+    def __init__(self, n_blocks=MIXER_BLOCKS, family="bsrbf_kan", rss_dim=520):
         super().__init__()
-        self.rss_projection = nn.Sequential(nn.Linear(520, 64), nn.LayerNorm(64))
+        self.rss_projection = nn.Sequential(nn.Linear(rss_dim, 64), nn.LayerNorm(64))
         self.blocks = nn.Sequential(*[SmallKANMixerBlock(family=family) for _ in range(n_blocks)])
         self.head = nn.Sequential(nn.LayerNorm(128), nn.Linear(128, 64),
                                   nn.SiLU(), nn.Linear(64, 2))

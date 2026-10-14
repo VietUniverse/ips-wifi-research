@@ -41,6 +41,12 @@ Bài báo gốc: [KSE 2025 proceedings](https://kse2025.kse-conferences.org/wp-c
 
 Các kết quả KAN-Mixer trước đây trong repo dùng BSRBF-KAN; menu tiếp tục giữ lựa chọn này dưới tên `KAN-Mixer (BSRBF-KAN + Residual Mixer)`. Có thêm `KAN-Mixer (KAN gốc / B-spline)`, FastKAN, S-KAN và FC-KAN + Mixer. Cần so sánh bằng cùng cách chia train/validation/test và báo cáo dữ liệu/preset/seed khi viết kết luận.
 
+### KAN-Mixer sau chọn AP bằng Random Forest
+
+Preset `configs/bsrbf_rf128_mixer_ap_robust.json` thêm bước chọn 128 AP bằng `RandomForestRegressor.feature_importances_`, sau khi RSS đã được chuẩn hóa. Forest và thứ hạng AP chỉ fit trên tập train của từng tòa; validation dùng chọn checkpoint/alpha, official test chỉ dùng báo cáo cuối. Runner lưu toàn bộ thứ hạng vào `rf_ap_importance.csv`, danh sách AP đã chọn vào checkpoint và vẽ `figures/rf_ap_importance.png`. Mixer nhận số AP còn lại qua phép chiếu RSS sang 64 chiều, nên có thể chạy với đầu vào đã giảm từ 520 xuống 128.
+
+Trong Colab, chọn `KAN-Mixer (BSRBF-KAN + Residual Mixer)` và `rss_ap_robust`; bộ chọn preset tự dùng preset RF trên. Kích thước 128 là một điểm thử nghiệm, không phải giá trị tối ưu đã được xác nhận. So sánh nên chạy thêm top-k khác và baseline 520 AP với cùng seed/split trước khi kết luận.
+
 ### 3. Notebook hợp nhất mã plugin
 
 Ô đầu tự động:

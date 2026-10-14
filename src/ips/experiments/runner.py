@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
@@ -38,6 +39,10 @@ class RunConfig:
     mixer_epochs: int = 40
     mixer_patience: int = 12
     with_mixer: bool = False
+    rf_feature_selection: bool = False
+    rf_top_k: int = 128
+    rf_n_estimators: int = 200
+    rf_max_depth: int | None = None
     balance_locations: bool = False
     augment_gain_std: float = 0.10
     augment_noise_std: float = 0.05
@@ -154,7 +159,7 @@ def _fit_mixer(model, data, scaler, config, device):
     target = torch.as_tensor(scaler.transform(data.y_train), dtype=torch.float32)
     loader = DataLoader(TensorDataset(torch.as_tensor(data.x_train), train_feat, train_base, target),
                         batch_size=128, shuffle=True)
-    mixer = ResidualKANMixer(family=config.model).to(device)
+    mixer = ResidualKANMixer(family=config.model, rss_dim=data.x_train.shape[1]).to(device)
     optimizer = torch.optim.AdamW(mixer.parameters(), lr=3e-4, weight_decay=1e-5)
     base_val = scaler.inverse_transform(val_base.numpy().astype(np.float64))
     best = mean_error(data.y_val, base_val)
@@ -224,10 +229,48 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
                                   config.preprocess, config.preprocess_params)
         print(f"building {building}: train={len(data.x_train)} val={len(data.x_val)} "
               f"test={len(data.x_test)} features={data.x_train.shape[1]} device={device}", flush=True)
-        if config.with_mixer and data.x_train.shape[1] != 520:
-            raise ValueError("Residual Mixer currently requires 520 AP features; choose a 520-AP preprocessor")
         folder = output / f"building_{building}"
         folder.mkdir()
+        feature_selection_info = None
+        if config.rf_feature_selection:
+            n_features = data.x_train.shape[1]
+            if not 1 <= config.rf_top_k <= n_features:
+                raise ValueError(f"rf_top_k must be between 1 and {n_features}, got {config.rf_top_k}")
+            # Rank APs using only the training split. Validation selects
+            # checkpoints/alpha; the official test remains untouched.
+            selector = RandomForestRegressor(
+                n_estimators=config.rf_n_estimators,
+                max_depth=config.rf_max_depth,
+                min_samples_leaf=2,
+                max_features=0.5,
+                random_state=config.seed,
+                n_jobs=-1,
+            )
+            selector.fit(data.x_train, data.y_train)
+            importance = selector.feature_importances_
+            ranked = np.argsort(importance)[::-1]
+            selected = np.sort(ranked[:config.rf_top_k])
+            pd.DataFrame({
+                "rank": np.arange(1, n_features + 1),
+                "feature": np.asarray(data.feature_columns)[ranked],
+                "importance": importance[ranked],
+                "selected": np.isin(ranked, selected),
+            }).to_csv(folder / "rf_ap_importance.csv", index=False)
+            original_columns = list(data.feature_columns)
+            data.x_train = data.x_train[:, selected]
+            data.x_val = data.x_val[:, selected]
+            data.x_test = data.x_test[:, selected]
+            data.feature_columns = [original_columns[i] for i in selected]
+            feature_selection_info = {
+                "method": "RandomForestRegressor impurity feature importance",
+                "fit_split": "train_only", "original_features": n_features,
+                "selected_features": len(selected), "selected_indices": selected.tolist(),
+                "selected_columns": data.feature_columns,
+                "n_estimators": config.rf_n_estimators,
+                "max_depth": config.rf_max_depth,
+                "min_samples_leaf": 2, "max_features": 0.5,
+            }
+            print(f"RF AP selection: {n_features} -> {len(selected)} features; fitted on train only", flush=True)
         pd.DataFrame({"source_row": np.r_[data.train_rows, data.val_rows],
                       "split": ["train"] * len(data.train_rows) + ["internal_val"] * len(data.val_rows)})\
             .to_csv(folder / "split.csv", index=False)
@@ -268,6 +311,9 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
         result = {"building": building, "model": config.model, "preprocess": config.preprocess,
                   "n_features": len(data.feature_columns), "best_val_m": best_val,
                   "best_epoch": epoch, "test_mean_m": mean_error(data.y_test, base_pred)}
+        if feature_selection_info is not None:
+            result["rf_original_features"] = feature_selection_info["original_features"]
+            result["rf_selected_features"] = feature_selection_info["selected_features"]
         chosen_pred = base_pred
         checkpoint = {"model": config.model, "building": building,
                       "preprocess": config.preprocess, "preprocess_params": config.preprocess_params,
@@ -275,6 +321,8 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
                       "scaler_mean": scaler.mean_, "scaler_scale": scaler.scale_,
                       "ap_columns": data.feature_columns,
                       "preprocess_state": data.preprocess_state}
+        if feature_selection_info is not None:
+            checkpoint["rf_feature_selection"] = feature_selection_info
         if config.with_mixer:
             chosen_pred, mixed = _fit_mixer(model, data, scaler, config, device)
             result.update({"mixer_val_m": mixed["best_val_m"], "alpha": mixed["alpha"],
