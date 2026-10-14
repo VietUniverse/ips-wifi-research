@@ -165,6 +165,19 @@ def render_run(run_dir, show=True):
             for ax in axes: ax.grid(alpha=.25); ax.legend()
             paths.append(_save(fig, folder, "training_history.png"))
 
+    importance_files = sorted(root.glob("building_*/rf_ap_importance.csv"))
+    if importance_files:
+        fig, axes = plt.subplots(1, len(importance_files),
+                                 figsize=(max(7, 5 * len(importance_files)), 6),
+                                 squeeze=False)
+        for ax, path in zip(axes[0], importance_files):
+            importance = pd.read_csv(path).nlargest(20, "importance").sort_values("importance")
+            ax.barh(importance.feature, importance.importance, color=plt.cm.Set2(2))
+            ax.set(title=f"Top RSS APs | {path.parent.name}", xlabel="RF importance")
+            ax.grid(axis="x", alpha=.25)
+            ax.set_axisbelow(True)
+        paths.append(_save(fig, folder, "rf_ap_importance.png"))
+
     if show:
         from IPython.display import display, Image
         display(table.round(3))

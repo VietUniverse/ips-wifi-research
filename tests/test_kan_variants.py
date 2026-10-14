@@ -34,6 +34,12 @@ class KANVariantTests(unittest.TestCase):
                 self.assertEqual(tuple(output.shape), (2, 2))
                 self.assertTrue(torch.isfinite(output).all())
 
+    def test_mixer_accepts_random_forest_selected_rss_dimension(self):
+        mixer = ResidualKANMixer(n_blocks=1, family="bsrbf_kan", rss_dim=128)
+        output = mixer(torch.randn(2, 128), torch.randn(2, 64))
+        self.assertEqual(tuple(output.shape), (2, 2))
+        self.assertTrue(torch.isfinite(output).all())
+
     def test_plugin_backbones_use_standard_architecture_and_output(self):
         for family in ("kan", "fastkan", "skan", "fckan"):
             with self.subTest(family=family):
