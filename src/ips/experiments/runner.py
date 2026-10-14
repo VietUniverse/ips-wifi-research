@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import random
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -14,7 +15,7 @@ import torch
 from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 
 from ips.algorithms.factory import create_model
 from ips.algorithms.residual_mixer import ResidualKANMixer
@@ -37,6 +38,10 @@ class RunConfig:
     mixer_epochs: int = 40
     mixer_patience: int = 12
     with_mixer: bool = False
+    balance_locations: bool = False
+    augment_gain_std: float = 0.10
+    augment_noise_std: float = 0.05
+    augment_dropout_prob: float = 0.06
     device: str = "auto"
 
 
@@ -75,10 +80,12 @@ def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5)
     best, best_state, best_epoch, stale = float("inf"), None, 0, 0
     history = []
+    print(f"{stage_name}: start {epochs} epochs, {len(loader)} batches/epoch on {device}", flush=True)
     for epoch in range(1, epochs + 1):
         model.train()
         total = 0.0
-        for xb, yb in loader:
+        started = time.perf_counter()
+        for batch_index, (xb, yb) in enumerate(loader, 1):
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad(set_to_none=True)
             loss = coordinate_loss(model(xb), yb)
@@ -88,6 +95,9 @@ def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr
             nn.utils.clip_grad_norm_(params, 5.0)
             optimizer.step()
             total += loss.item() * len(xb)
+            if epoch == 1 and (batch_index == 1 or batch_index % max(1, len(loader) // 4) == 0):
+                print(f"{stage_name} epoch 1: batch {batch_index}/{len(loader)}, "
+                      f"{time.perf_counter() - started:.1f}s", flush=True)
         pred_val = scaler.inverse_transform(_predict(model, x_val, device).astype(np.float64))
         score = mean_error(y_val, pred_val)
         scheduler.step(score)
@@ -98,7 +108,8 @@ def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr
         else:
             stale += 1
         if epoch == 1 or epoch % 5 == 0:
-            print(f"{stage_name} {epoch:03d}: train={total / len(loader.dataset):.4f} val={score:.3f} m")
+            print(f"{stage_name} {epoch:03d}: train={total / len(loader.dataset):.4f} "
+                  f"val={score:.3f} m elapsed={time.perf_counter() - started:.1f}s", flush=True)
         if stale >= patience:
             break
     if best_state is None:
@@ -110,7 +121,7 @@ def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr
 @torch.no_grad()
 def _features_and_baseline(model, x, device, batch_size=256):
     if not hasattr(model, "layers"):
-        raise ValueError("Residual Mixer requires a BSRBF-KAN backbone")
+        raise ValueError("Residual Mixer requires a KAN backbone with layers")
     model.eval()
     feats, base = [], []
     for start in range(0, len(x), batch_size):
@@ -143,16 +154,18 @@ def _fit_mixer(model, data, scaler, config, device):
     target = torch.as_tensor(scaler.transform(data.y_train), dtype=torch.float32)
     loader = DataLoader(TensorDataset(torch.as_tensor(data.x_train), train_feat, train_base, target),
                         batch_size=128, shuffle=True)
-    mixer = ResidualKANMixer().to(device)
+    mixer = ResidualKANMixer(family=config.model).to(device)
     optimizer = torch.optim.AdamW(mixer.parameters(), lr=3e-4, weight_decay=1e-5)
     base_val = scaler.inverse_transform(val_base.numpy().astype(np.float64))
     best = mean_error(data.y_val, base_val)
     best_state, best_alpha, best_epoch, stale = None, 0.0, 0, 0
     history = []
+    print(f"mixer: start {config.mixer_epochs} epochs, {len(loader)} batches/epoch on {device}", flush=True)
     for epoch in range(1, config.mixer_epochs + 1):
         mixer.train()
         total = 0.0
-        for rss, feat, base, y in loader:
+        started = time.perf_counter()
+        for batch_index, (rss, feat, base, y) in enumerate(loader, 1):
             rss, feat, base, y = (v.to(device) for v in (rss, feat, base, y))
             optimizer.zero_grad(set_to_none=True)
             loss = coordinate_loss(base + mixer(rss, feat), y)
@@ -160,6 +173,9 @@ def _fit_mixer(model, data, scaler, config, device):
             nn.utils.clip_grad_norm_(mixer.parameters(), 5.0)
             optimizer.step()
             total += loss.item() * len(rss)
+            if epoch == 1 and (batch_index == 1 or batch_index % max(1, len(loader) // 4) == 0):
+                print(f"mixer epoch 1: batch {batch_index}/{len(loader)}, "
+                      f"{time.perf_counter() - started:.1f}s", flush=True)
         delta = _mixer_correction(mixer, data.x_val, val_feat, device)
         scores = {alpha: mean_error(data.y_val, scaler.inverse_transform(
             val_base.numpy().astype(np.float64) + alpha * delta))
@@ -173,7 +189,8 @@ def _fit_mixer(model, data, scaler, config, device):
         else:
             stale += 1
         if epoch == 1 or epoch % 5 == 0:
-            print(f"mixer {epoch:03d}: train={total / len(loader.dataset):.4f} val={val:.3f} m alpha={alpha}")
+            print(f"mixer {epoch:03d}: train={total / len(loader.dataset):.4f} "
+                  f"val={val:.3f} m alpha={alpha} elapsed={time.perf_counter() - started:.1f}s", flush=True)
         if stale >= config.mixer_patience:
             break
     if best_state is not None:
@@ -186,8 +203,9 @@ def _fit_mixer(model, data, scaler, config, device):
 
 
 def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
-    if config.with_mixer and config.model != "bsrbf_kan":
-        raise ValueError("with_mixer requires model=bsrbf_kan")
+    kan_families = {"kan", "fastkan", "bsrbf_kan", "skan", "fckan"}
+    if config.with_mixer and config.model not in kan_families:
+        raise ValueError(f"with_mixer requires a KAN model; choose one of {sorted(kan_families)}")
     output = Path(output_dir)
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Output directory must be new or empty: {output}")
@@ -204,8 +222,10 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
     for building in config.buildings:
         data = make_building_data(train, test, building, config.val_size, config.seed,
                                   config.preprocess, config.preprocess_params)
+        print(f"building {building}: train={len(data.x_train)} val={len(data.x_val)} "
+              f"test={len(data.x_test)} features={data.x_train.shape[1]} device={device}", flush=True)
         if config.with_mixer and data.x_train.shape[1] != 520:
-            raise ValueError("Residual Mixer currently requires 520 AP features; choose rss_standard")
+            raise ValueError("Residual Mixer currently requires 520 AP features; choose a 520-AP preprocessor")
         folder = output / f"building_{building}"
         folder.mkdir()
         pd.DataFrame({"source_row": np.r_[data.train_rows, data.val_rows],
@@ -213,8 +233,20 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
             .to_csv(folder / "split.csv", index=False)
         scaler = StandardScaler().fit(data.y_train)
         y_norm = scaler.transform(data.y_train).astype(np.float32)
-        train_loader = DataLoader(DeviceAugmentedRSSDataset(data.x_train, y_norm),
-                                  batch_size=config.batch_size, shuffle=True)
+        train_dataset = DeviceAugmentedRSSDataset(
+            data.x_train, y_norm, gain_std=config.augment_gain_std,
+            noise_std=config.augment_noise_std, dropout_prob=config.augment_dropout_prob)
+        sampler = None
+        if config.balance_locations:
+            local_train = train.loc[data.train_rows]
+            groups = (local_train.FLOOR.astype(str) + "_"
+                      + local_train.LONGITUDE.round(1).astype(str) + "_"
+                      + local_train.LATITUDE.round(1).astype(str)).to_numpy()
+            _, inverse, counts = np.unique(groups, return_inverse=True, return_counts=True)
+            weights = torch.as_tensor(1.0 / counts[inverse], dtype=torch.double)
+            sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+        train_loader = DataLoader(train_dataset, batch_size=config.batch_size,
+                                  shuffle=sampler is None, sampler=sampler)
         model = create_model(config.model, data.x_train.shape[1]).to(device)
         history = []
         if config.model == "bsrbf_kan" and config.stage1_epochs:
