@@ -1,0 +1,20 @@
+{
+  "model": "cdae_cnn_ccpos",
+  "preprocess": "rss_standard",
+  "buildings": [0, 1],
+  "seed": 42,
+  "val_size": 0.2,
+  "batch_size": 16,
+  "with_mixer": false,
+  "ccpos_notebook_pipeline": true,
+  "ccpos_cdae_epochs": 2,
+  "ccpos_cdae_patience": 2,
+  "ccpos_task_epochs": 2,
+  "ccpos_task_patience": 2,
+  "ccpos_floor_patience": 2,
+  "ccpos_position_epochs": 2,
+  "ccpos_position_patience": 2,
+  "ccpos_noise_factor": 0.3,
+  "ccpos_lr": 1e-4,
+  "ccpos_kmeans_k": 20
+}
