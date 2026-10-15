@@ -18,7 +18,6 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 
-from ips.algorithms.ccpos_notebook import run_notebook_pipeline
 from ips.algorithms.factory import create_model
 from ips.algorithms.residual_mixer import ResidualKANMixer
 from ips.data.augmentation import DeviceAugmentedRSSDataset
@@ -49,18 +48,6 @@ class RunConfig:
     augment_noise_std: float = 0.05
     augment_dropout_prob: float = 0.06
     device: str = "auto"
-    # Opt-in CCpos notebook pipeline. Defaults preserve existing runs.
-    ccpos_notebook_pipeline: bool | None =  None
-    ccpos_cdae_epochs: int = 100
-    ccpos_cdae_patience: int = 3
-    ccpos_task_epochs: int = 150
-    ccpos_task_patience: int = 10
-    ccpos_floor_patience: int = 10
-    ccpos_position_epochs: int = 150
-    ccpos_position_patience: int = 10
-    ccpos_noise_factor: float = 0.3
-    ccpos_lr: float = 1e-4
-    ccpos_kmeans_k: int = 2000
 
 
 def mean_error(true_xy, pred_xy):
@@ -224,17 +211,6 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
     kan_families = {"kan", "fastkan", "bsrbf_kan", "skan", "fckan"}
     if config.with_mixer and config.model not in kan_families:
         raise ValueError(f"with_mixer requires a KAN model; choose one of {sorted(kan_families)}")
-    use_ccpos_pipeline = (
-        config.ccpos_notebook_pipeline
-        if config.ccpos_notebook_pipeline is not None
-        else config.model == "cdae_cnn_ccpos"
-    )
-
-    if use_ccpos_pipeline and config.model != "cdae_cnn_ccpos":
-        raise ValueError(
-            "ccpos_notebook_pipeline is only supported "
-            "for model='cdae_cnn_ccpos'"
-        )
     output = Path(output_dir)
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Output directory must be new or empty: {output}")
@@ -247,8 +223,6 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
     device = _device(config)
     train, test = load_csvs(data_dir)
     (output / "config.json").write_text(json.dumps(asdict(config), indent=2), encoding="utf-8")
-    if use_ccpos_pipeline:
-        return run_notebook_pipeline(train, test, config, output, device)
     rows, preds = [], []
     for building in config.buildings:
         data = make_building_data(train, test, building, config.val_size, config.seed,
