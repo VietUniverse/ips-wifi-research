@@ -50,7 +50,7 @@ class RunConfig:
     augment_dropout_prob: float = 0.06
     device: str = "auto"
     # Opt-in CCpos notebook pipeline. Defaults preserve existing runs.
-    ccpos_notebook_pipeline: bool = False
+    ccpos_notebook_pipeline: bool | None =  None
     ccpos_cdae_epochs: int = 100
     ccpos_cdae_patience: int = 3
     ccpos_task_epochs: int = 150
@@ -224,8 +224,17 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
     kan_families = {"kan", "fastkan", "bsrbf_kan", "skan", "fckan"}
     if config.with_mixer and config.model not in kan_families:
         raise ValueError(f"with_mixer requires a KAN model; choose one of {sorted(kan_families)}")
-    if config.ccpos_notebook_pipeline and config.model != "cdae_cnn_ccpos":
-        raise ValueError("ccpos_notebook_pipeline is only supported for model='cdae_cnn_ccpos'")
+    use_ccpos_pipeline = (
+        config.ccpos_notebook_pipeline
+        if config.ccpos_notebook_pipeline is not None
+        else config.model == "cdae_cnn_ccpos"
+    )
+
+    if use_ccpos_pipeline and config.model != "cdae_cnn_ccpos":
+        raise ValueError(
+            "ccpos_notebook_pipeline is only supported "
+            "for model='cdae_cnn_ccpos'"
+        )
     output = Path(output_dir)
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Output directory must be new or empty: {output}")
@@ -238,9 +247,7 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
     device = _device(config)
     train, test = load_csvs(data_dir)
     (output / "config.json").write_text(json.dumps(asdict(config), indent=2), encoding="utf-8")
-    if config.ccpos_notebook_pipeline:
-        # Separate opt-in route; default runs continue through the original
-        # per-building pipeline below, with RF selection, balancing and mixer intact.
+    if use_ccpos_pipeline:
         return run_notebook_pipeline(train, test, config, output, device)
     rows, preds = [], []
     for building in config.buildings:
