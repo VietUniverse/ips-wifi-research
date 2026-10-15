@@ -1,23 +1,23 @@
 from __future__ import annotations
 import torch
 from torch import nn
-from .bsrbf_kan import BSRBF_KANLayer
+from .kan_layers import make_kan_layer
 
 GRID_SIZE = 4
 SPLINE_ORDER = 3
 MIXER_BLOCKS = 2
 
 class SmallKANMixerBlock(nn.Module):
-    def __init__(self, tokens=16, channels=8):
+    def __init__(self, tokens=16, channels=8, family="bsrbf_kan"):
         super().__init__()
         self.token_norm = nn.LayerNorm(channels)
         self.token_net = nn.Sequential(
-            BSRBF_KANLayer(tokens, 32, grid_size=GRID_SIZE, spline_order=SPLINE_ORDER),
-            BSRBF_KANLayer(32, tokens, grid_size=GRID_SIZE, spline_order=SPLINE_ORDER))
+            make_kan_layer(family, tokens, 32),
+            make_kan_layer(family, 32, tokens))
         self.channel_norm = nn.LayerNorm(channels)
         self.channel_net = nn.Sequential(
-            BSRBF_KANLayer(channels, 16, grid_size=GRID_SIZE, spline_order=SPLINE_ORDER),
-            BSRBF_KANLayer(16, channels, grid_size=GRID_SIZE, spline_order=SPLINE_ORDER))
+            make_kan_layer(family, channels, 16),
+            make_kan_layer(family, 16, channels))
 
     def forward(self, x):
         batch, tokens, channels = x.shape
@@ -28,10 +28,10 @@ class SmallKANMixerBlock(nn.Module):
 
 
 class ResidualKANMixer(nn.Module):
-    def __init__(self, n_blocks=MIXER_BLOCKS):
+    def __init__(self, n_blocks=MIXER_BLOCKS, family="bsrbf_kan", rss_dim=520):
         super().__init__()
-        self.rss_projection = nn.Sequential(nn.Linear(520, 64), nn.LayerNorm(64))
-        self.blocks = nn.Sequential(*[SmallKANMixerBlock() for _ in range(n_blocks)])
+        self.rss_projection = nn.Sequential(nn.Linear(rss_dim, 64), nn.LayerNorm(64))
+        self.blocks = nn.Sequential(*[SmallKANMixerBlock(family=family) for _ in range(n_blocks)])
         self.head = nn.Sequential(nn.LayerNorm(128), nn.Linear(128, 64),
                                   nn.SiLU(), nn.Linear(64, 2))
         nn.init.zeros_(self.head[-1].weight)
