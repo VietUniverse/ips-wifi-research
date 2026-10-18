@@ -226,3 +226,119 @@ class _JointMixerPlugin(nn.Module):
             if torch.isfinite(recon_loss):
                 recon_loss.backward(retain_graph=True)
         return position
+
+
+# ---------------------------------------------------------------------------
+# Pretrained variants (SAE-MMP / CDAE-MMP)
+# ---------------------------------------------------------------------------
+#
+# Paper's SAE-MMP/CDAE-MMP are two genuinely separate training phases: (1) the
+# autoencoder is trained on unlabeled data with reconstruction loss only, (2)
+# its (now fixed) latent features are fed to the MLP-Mixer, which is trained
+# with the supervised position loss. This is different from SAE-MMJ/CDAE-MMJ
+# above, where both parts are updated together from the start.
+#
+# Like `_JointMixerPlugin`, this is implemented self-contained inside the
+# model -- no edits to `runner.py` -- because `runner.py` only ever runs a
+# single `_fit_stage(... epochs ...)` call for these models (its own
+# `stage1_epochs` branch is hardwired to `bsrbf_kan` and does unrelated,
+# label-supervised partial-layer fine-tuning, not unsupervised AE
+# pretraining), and `ips.algorithms.factory.create_model(name, input_dim)`
+# has no channel to pass a per-run epoch count into `build_model` anyway.
+#
+# Mechanism: `_PretrainedMixerPlugin` counts training forward() calls in
+# `self._step`. While `self._step < self.pretrain_steps` ("phase 1"):
+#   - the extractor (SAE/CDAE) is trainable and is updated *only* from the
+#     reconstruction loss, via the same manual `backward(retain_graph=True)`
+#     trick `_JointMixerPlugin` uses (see the module docstring above);
+#   - the latent `z` fed to the Mixer/position head is `z.detach()`, so the
+#     position loss that `runner.py` backward()s afterwards cannot reach the
+#     extractor's parameters -- it never sees the (unsupervised) SAE/CDAE
+#     objective, matching "the SAE is first trained on unlabeled data" in
+#     the paper;
+#   - the Mixer/position head stay trainable and *do* receive the position
+#     loss gradient during phase 1 too. This is a deliberate, safe choice,
+#     not an oversight: `runner.py`'s `_fit_stage` unconditionally calls
+#     `coordinate_loss(model(xb), yb).backward()` every step, which requires
+#     `model(xb)` to carry a gradient path with at least one `requires_grad`
+#     leaf; freezing the Mixer/head during phase 1 as well (on top of the
+#     `z.detach()`) would make that output carry no grad at all and crash
+#     that shared call. Letting the Mixer/head warm-start on the
+#     progressively-improving (but detached) features is harmless for the
+#     paper's distinction, since what actually defines "pretrained" here is
+#     that the extractor never sees the position signal -- which still holds.
+#
+# At `self._step == self.pretrain_steps` ("phase 2"), the extractor's
+# parameters are frozen (`requires_grad_(False)`) and the reconstruction
+# loss is no longer computed or backward()ed. `z` is no longer manually
+# detached in phase 2 either -- it does not need to be: with every extractor
+# parameter frozen and the input `x` itself not requiring grad, `z` already
+# carries no gradient path back into the extractor, so the position loss
+# naturally only updates the Mixer/position head from here on, exactly the
+# "fixed pretrained features -> supervised Mixer training" the paper
+# describes.
+#
+# `self._step` only advances on *training* forward() calls (guarded by
+# `self.training and torch.is_grad_enabled()`), so validation/prediction
+# passes (``_predict`` runs under ``model.eval()`` and ``torch.no_grad()``)
+# never consume the pretrain budget.
+#
+# `PRETRAIN_STEPS` is a fixed step budget, not an epoch count, because this
+# class has no visibility into the dataloader's batches-per-epoch (that is
+# decided inside `runner.py`, which is intentionally not touched). At the
+# repo's batch_size=64, 2000 steps is roughly 10-40 epochs depending on the
+# building/dataset size -- in the same ballpark as `RunConfig`'s own
+# `stage1_epochs` default (30) used elsewhere in this repo. Pass a different
+# `pretrain_steps` to the constructor to override it per-instance; there is
+# currently no config.json knob for this (see the module-level rationale
+# above), so overriding means constructing the plugin directly rather than
+# going through `create_model`/`build_model`.
+PRETRAIN_STEPS = 2000
+
+
+class _PretrainedMixerPlugin(nn.Module):
+    """Two-phase pretrained-then-supervised adapter (SAE-MMP / CDAE-MMP).
+
+    Phase 1 (``self._step < pretrain_steps``): extractor trained from
+    reconstruction loss only; Mixer/position head warm-start on detached
+    features. Phase 2: extractor frozen; Mixer/position head trained from
+    the position loss alone. See the module-level comment above for why
+    this is implemented this way instead of touching ``runner.py``.
+    """
+
+    def __init__(self, feature_extractor: nn.Module, name: str,
+                 pretrain_steps: int = PRETRAIN_STEPS,
+                 recon_loss_weight: float = RECON_LOSS_WEIGHT):
+        super().__init__()
+        self.inner = JointMixerModel(feature_extractor, name=name)
+        self.pretrain_steps = pretrain_steps
+        self.recon_loss_weight = recon_loss_weight
+        self._step = 0
+        self._extractor_trainable = True  # matches the fresh module's initial requires_grad=True
+
+    def _set_extractor_trainable(self, trainable: bool):
+        if trainable == self._extractor_trainable:
+            return
+        for p in self.inner.extractor.parameters():
+            p.requires_grad_(trainable)
+        self._extractor_trainable = trainable
+
+    def forward(self, x):
+        pretraining = self._step < self.pretrain_steps
+        self._set_extractor_trainable(pretraining)
+
+        z, reconstruction = self.inner.extractor(x)
+        z_in = z.detach() if pretraining else z
+        z_in = self.inner.latent_norm(z_in)
+        h = self.inner.embedding(z_in).view(x.size(0), NUM_TOKENS, HIDDEN_DIM)
+        h = self.inner.mixers(h)
+        h = self.inner.norm(h).mean(dim=1)
+        position = self.inner.position_head(h)
+
+        if self.training and torch.is_grad_enabled():
+            if pretraining:
+                recon_loss = self.recon_loss_weight * F.mse_loss(reconstruction, x)
+                if torch.isfinite(recon_loss):
+                    recon_loss.backward(retain_graph=True)
+            self._step += 1
+        return position
