@@ -113,6 +113,27 @@ class ProtocolTests(unittest.TestCase):
             summary = json.loads((base / "run" / "summary.json").read_text())
             self.assertEqual(summary["by_building"][0]["n_features"], 1)
 
+    def test_runner_can_select_rss_features_with_random_forest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            data_dir = base / "data"
+            data_dir.mkdir()
+            _frame(30, 1).to_csv(data_dir / "trainingData.csv", index=False)
+            _frame(4, 1).to_csv(data_dir / "validationData.csv", index=False)
+            result = run(data_dir, base / "run", RunConfig(
+                model="mlp", preprocess="ap_frequency",
+                preprocess_params={"min_observations": 2}, buildings=(1,),
+                stage1_epochs=0, stage2_epochs=1, patience=1,
+                rf_feature_selection=True, rf_top_k=1, rf_n_estimators=5,
+            ))
+            self.assertEqual(result["n"], 4)
+            import json
+            summary = json.loads((base / "run" / "summary.json").read_text())
+            row = summary["by_building"][0]
+            self.assertEqual(row["rf_original_features"], 1)
+            self.assertEqual(row["rf_selected_features"], 1)
+            self.assertTrue((base / "run" / "building_1" / "rf_ap_importance.csv").exists())
+
     def test_bsrbf_layer_and_zero_initialized_mixer(self):
         layer = BSRBF_KANLayer(4, 3, grid_size=4, spline_order=3)
         self.assertEqual(tuple(layer(torch.zeros(2, 4)).shape), (2, 3))
