@@ -10,6 +10,7 @@ from pathlib import Path
 from ips.algorithms.factory import available_models, create_model
 from ips.algorithms.bsrbf_kan import BSRBF_KANLayer
 from ips.algorithms.residual_mixer import ResidualKANMixer
+from ips.algorithms.mmj_common import CDAE, SAE, _JointMixerPlugin
 from ips.data.augmentation import DeviceAugmentedRSSDataset
 from ips.data.preprocessors.factory import available_preprocessors, create_preprocessor
 from ips.data.uji import AP_COLUMNS, make_building_data, preprocess_rss
@@ -139,3 +140,67 @@ class ProtocolTests(unittest.TestCase):
         mixer = ResidualKANMixer(n_blocks=1)
         out = mixer(torch.zeros(2, 520), torch.zeros(2, 64))
         self.assertTrue(bool(torch.allclose(out, torch.zeros_like(out))))
+
+    def test_sae_cdae_mmj_registered_with_correct_output_shape(self):
+        self.assertIn("sae_mmj", available_models())
+        self.assertIn("cdae_mmj", available_models())
+        for name in ("sae_mmj", "cdae_mmj"):
+            model = create_model(name, 20)
+            model.eval()
+            with torch.no_grad():
+                out = model(torch.zeros(3, 20))
+            self.assertEqual(tuple(out.shape), (3, 2))
+
+    def test_cdae_corruption_only_touches_observed_aps_in_training(self):
+        from ips.algorithms.mmj_common import corrupt_rss
+        x = torch.full((50, 20), -1.0)
+        x[:, 0] = 0.8  # one observed AP, every row
+        corrupted = corrupt_rss(x, prob=1.0)
+        # Missing APs (-1) must stay untouched; only the single observed
+        # column could have been forced back to "not detected".
+        self.assertTrue(bool((corrupted[:, 1:] == -1.0).all()))
+        self.assertTrue(bool((corrupted[:, 0] == -1.0).all()))  # prob=1.0: always corrupted
+
+        cdae = CDAE(20, corruption_prob=1.0)
+        cdae.train()
+        _, reconstruction = cdae(x)
+        self.assertEqual(tuple(reconstruction.shape), x.shape)
+
+    def test_joint_mixer_plugin_backprops_reconstruction_gradient(self):
+        # Mirrors exactly what runner.py's _fit_stage does per step, to
+        # confirm the reconstruction loss really contributes gradient
+        # without runner.py knowing about it (see mmj_common docstring).
+        torch.manual_seed(0)
+        model = _JointMixerPlugin(SAE(20), name="SAE-MMJ-test")
+        model.train()
+        encoder_param = next(model.inner.extractor.encoder.parameters())
+
+        xb = torch.randn(4, 20)
+        yb = torch.randn(4, 2)
+
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+        optimizer.zero_grad(set_to_none=True)
+        pred = model(xb)  # forward() does the reconstruction-loss backward internally
+        position_loss = torch.nn.functional.mse_loss(pred, yb)
+        grad_after_recon_only = encoder_param.grad.clone()
+        position_loss.backward()
+        grad_after_both = encoder_param.grad.clone()
+
+        # The reconstruction pass alone must already have produced a
+        # nonzero gradient (proves the aux loss is wired in), and the
+        # position backward must add to it rather than overwrite it.
+        self.assertFalse(bool(torch.allclose(grad_after_recon_only, torch.zeros_like(grad_after_recon_only))))
+        self.assertFalse(bool(torch.allclose(grad_after_both, grad_after_recon_only)))
+
+    def test_runner_trains_sae_mmj_end_to_end(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            data_dir = base / "data"
+            data_dir.mkdir()
+            _frame(20, 1).to_csv(data_dir / "trainingData.csv", index=False)
+            _frame(4, 1).to_csv(data_dir / "validationData.csv", index=False)
+            result = run(data_dir, base / "run", RunConfig(
+                model="sae_mmj", preprocess="rss_standard", buildings=(1,),
+                stage1_epochs=0, stage2_epochs=1, patience=1,
+            ))
+            self.assertEqual(result["n"], 4)
