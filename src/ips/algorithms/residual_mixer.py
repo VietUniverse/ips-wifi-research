@@ -7,17 +7,25 @@ GRID_SIZE = 4
 SPLINE_ORDER = 3
 MIXER_BLOCKS = 2
 
+def mixing_network(kind, family, width, hidden):
+    """Build one axis mixer; KAN keeps the original state-dict layout."""
+    if kind == "kan":
+        return nn.Sequential(make_kan_layer(family, width, hidden),
+                             make_kan_layer(family, hidden, width))
+    if kind == "mlp":
+        return nn.Sequential(nn.Linear(width, hidden), nn.GELU(),
+                             nn.Linear(hidden, width))
+    raise ValueError(f"Mixer type must be 'kan' or 'mlp', got {kind!r}")
+
+
 class SmallKANMixerBlock(nn.Module):
-    def __init__(self, tokens=16, channels=8, family="bsrbf_kan"):
+    def __init__(self, tokens=16, channels=8, family="bsrbf_kan",
+                 token_type="kan", channel_type="kan"):
         super().__init__()
         self.token_norm = nn.LayerNorm(channels)
-        self.token_net = nn.Sequential(
-            make_kan_layer(family, tokens, 32),
-            make_kan_layer(family, 32, tokens))
+        self.token_net = mixing_network(token_type, family, tokens, 32)
         self.channel_norm = nn.LayerNorm(channels)
-        self.channel_net = nn.Sequential(
-            make_kan_layer(family, channels, 16),
-            make_kan_layer(family, 16, channels))
+        self.channel_net = mixing_network(channel_type, family, channels, 16)
 
     def forward(self, x):
         batch, tokens, channels = x.shape
@@ -29,12 +37,15 @@ class SmallKANMixerBlock(nn.Module):
 
 class ResidualKANMixer(nn.Module):
     def __init__(self, n_blocks=MIXER_BLOCKS, family="bsrbf_kan", rss_dim=520,
-                 arch="legacy_16x8", ap_indices=None):
+                 arch="legacy_16x8", ap_indices=None,
+                 token_type="kan", channel_type="kan"):
         super().__init__()
         self.arch = arch
         if arch == "legacy_16x8":
             self.rss_projection = nn.Sequential(nn.Linear(rss_dim, 64), nn.LayerNorm(64))
-            self.blocks = nn.Sequential(*[SmallKANMixerBlock(family=family) for _ in range(n_blocks)])
+            self.blocks = nn.Sequential(*[SmallKANMixerBlock(
+                family=family, token_type=token_type, channel_type=channel_type)
+                for _ in range(n_blocks)])
             self.head = nn.Sequential(nn.LayerNorm(128), nn.Linear(128, 64),
                                       nn.SiLU(), nn.Linear(64, 2))
         elif arch == "ap_token":
@@ -48,7 +59,8 @@ class ResidualKANMixer(nn.Module):
             self.ap_embedding = nn.Embedding(max(indices) + 1, 8)
             self.feature_context = nn.Linear(64, 8)
             self.blocks = nn.Sequential(*[
-                SmallKANMixerBlock(tokens=rss_dim, channels=8, family=family)
+                SmallKANMixerBlock(tokens=rss_dim, channels=8, family=family,
+                                   token_type=token_type, channel_type=channel_type)
                 for _ in range(n_blocks)
             ])
             self.head = nn.Sequential(nn.LayerNorm(rss_dim * 8), nn.Linear(rss_dim * 8, 128),

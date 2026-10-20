@@ -27,5 +27,8 @@
   "balance_locations": true,
   "augment_gain_std": 0.18,
   "augment_noise_std": 0.07,
-  "augment_dropout_prob": 0.1
+  "augment_dropout_prob": 0.1,
+  "mixer_token_type": "kan",
+  "mixer_channel_type": "kan",
+  "mixer_isolate_rng": true
 }

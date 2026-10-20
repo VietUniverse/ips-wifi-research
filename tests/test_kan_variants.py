@@ -34,6 +34,21 @@ class KANVariantTests(unittest.TestCase):
                 self.assertEqual(tuple(output.shape), (2, 2))
                 self.assertTrue(torch.isfinite(output).all())
 
+    def test_all_token_channel_mixer_combinations_are_trainable(self):
+        for token_type, channel_type in (("kan", "kan"), ("kan", "mlp"),
+                                         ("mlp", "kan"), ("mlp", "mlp")):
+            with self.subTest(token=token_type, channel=channel_type):
+                mixer = ResidualKANMixer(n_blocks=1, family="bsrbf_kan", rss_dim=5,
+                                         arch="ap_token", token_type=token_type,
+                                         channel_type=channel_type)
+                out = mixer(torch.randn(2, 5), torch.randn(2, 64))
+                self.assertEqual(tuple(out.shape), (2, 2))
+                self.assertTrue(torch.isfinite(out).all())
+                block_input = torch.randn(2, 5, 8, requires_grad=True)
+                mixer.blocks(block_input).square().mean().backward()
+                self.assertIsNotNone(block_input.grad)
+                self.assertTrue(torch.isfinite(block_input.grad).all())
+
     def test_mixer_accepts_random_forest_selected_rss_dimension(self):
         mixer = ResidualKANMixer(n_blocks=1, family="bsrbf_kan", rss_dim=128)
         output = mixer(torch.randn(2, 128), torch.randn(2, 64))

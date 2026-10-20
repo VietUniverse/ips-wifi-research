@@ -34,7 +34,13 @@ def _models(config, predictions):
         if not models:
             models = [c.removesuffix("_error_m") for c in predictions if c.endswith("_error_m")]
         return models
-    return [config["model"] + ("+mixer" if config.get("with_mixer") else "")]
+    model = config["model"]
+    if config.get("with_mixer"):
+        model += "+mixer"
+        if config.get("mixer_arch") == "ap_token":
+            model += (f"[AP tokens; token={config.get('mixer_token_type', 'kan').upper()}, "
+                      f"channel={config.get('mixer_channel_type', 'kan').upper()}]")
+    return [model]
 
 
 def _errors(config, predictions, model):
