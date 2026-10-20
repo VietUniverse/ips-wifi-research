@@ -218,6 +218,12 @@ class NotebookTests(unittest.TestCase):
                 "cdae_cnn_ccpos_robust.json": {
                     "model": "cdae_cnn_ccpos", "with_mixer": False,
                     "preprocess": "rss_ap_robust", "preprocess_params": {"trim": 1}},
+                "bsrbf_mixer_ap_tokens.json": {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_ap_robust", "mixer_arch": "ap_token"},
+                "bsrbf_rf128_mixer_ap_robust.json": {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_ap_robust", "rf_feature_selection": True},
             }.items():
                 (config_dir / name).write_text(json.dumps(config), encoding="utf-8")
 
@@ -240,3 +246,40 @@ class NotebookTests(unittest.TestCase):
                          "configs/cdae_cnn_ccpos_robust.json")
         self.assertEqual(mapping[("fastkan", "rss_standard")], "configs/kan_baseline.json")
         self.assertEqual(mapping[("fastkan", "rss_ap_robust")], "configs/kan_baseline.json")
+
+    def test_ap_token_mixer_preset_wins_for_robust_rss(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        menu = next("".join(c["source"]) for c in cells if c["cell_type"] == "code"
+                    and "selected_family = choose_one" in "".join(c["source"]))
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp)
+            config_dir = project / "configs"
+            config_dir.mkdir()
+            configs = {
+                "bsrbf_mixer_ap_robust.json": {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_ap_robust"},
+                "bsrbf_rf128_mixer_ap_robust.json": {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_ap_robust", "rf_feature_selection": True},
+                "bsrbf_mixer_ap_tokens.json": {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_ap_robust", "mixer_arch": "ap_token"},
+            }
+            for name, config in configs.items():
+                (config_dir / name).write_text(json.dumps(config), encoding="utf-8")
+            available = json.dumps({"models": ["bsrbf_kan", "kan", "fastkan", "skan", "fckan"],
+                                    "preprocessors": ["rss_ap_robust"]})
+            namespace = {"project": project, "Path": Path,
+                         "subprocess": subprocess, "sys": sys}
+            available_ids = ["bsrbf_kan", "kan", "fastkan", "skan", "fckan",
+                             "kan_mixer", "kan_spline_mixer", "fastkan_mixer",
+                             "skan_mixer", "fckan_mixer"]
+            mixer_choice = sorted(available_ids).index("kan_mixer") + 1
+            with patch.object(subprocess, "check_output", return_value=available), \
+                 patch("builtins.input", side_effect=["1", str(mixer_choice), "1", "", ""]), \
+                 redirect_stdout(io.StringIO()):
+                exec(menu, namespace)
+            self.assertEqual(namespace["selected_preset_map"][("kan_mixer", "rss_ap_robust")],
+                             "configs/bsrbf_mixer_ap_tokens.json")

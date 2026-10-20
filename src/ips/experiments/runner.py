@@ -38,7 +38,9 @@ class RunConfig:
     patience: int = 15
     mixer_epochs: int = 40
     mixer_patience: int = 12
+    mixer_batch_size: int = 128
     with_mixer: bool = False
+    mixer_arch: str = "legacy_16x8"
     rf_feature_selection: bool = False
     rf_top_k: int = 128
     rf_n_estimators: int = 200
@@ -158,8 +160,17 @@ def _fit_mixer(model, data, scaler, config, device):
     test_feat, test_base = _features_and_baseline(model, data.x_test, device)
     target = torch.as_tensor(scaler.transform(data.y_train), dtype=torch.float32)
     loader = DataLoader(TensorDataset(torch.as_tensor(data.x_train), train_feat, train_base, target),
-                        batch_size=128, shuffle=True)
-    mixer = ResidualKANMixer(family=config.model, rss_dim=data.x_train.shape[1]).to(device)
+                        batch_size=config.mixer_batch_size, shuffle=True)
+    ap_indices = None
+    if config.mixer_arch == "ap_token":
+        # Preserve original AP identities even when a selector keeps only a subset.
+        parsed = []
+        for index, column in enumerate(data.feature_columns):
+            digits = "".join(ch for ch in str(column) if ch.isdigit())
+            parsed.append(max(int(digits) - 1, 0) if str(column).upper().startswith("WAP") and digits else index)
+        ap_indices = parsed
+    mixer = ResidualKANMixer(family=config.model, rss_dim=data.x_train.shape[1],
+                             arch=config.mixer_arch, ap_indices=ap_indices).to(device)
     optimizer = torch.optim.AdamW(mixer.parameters(), lr=3e-4, weight_decay=1e-5)
     base_val = scaler.inverse_transform(val_base.numpy().astype(np.float64))
     best = mean_error(data.y_val, base_val)
@@ -320,13 +331,14 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
                       "state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
                       "scaler_mean": scaler.mean_, "scaler_scale": scaler.scale_,
                       "ap_columns": data.feature_columns,
-                      "preprocess_state": data.preprocess_state}
+                      "preprocess_state": data.preprocess_state,
+                      "mixer_arch": config.mixer_arch if config.with_mixer else None}
         if feature_selection_info is not None:
             checkpoint["rf_feature_selection"] = feature_selection_info
         if config.with_mixer:
             chosen_pred, mixed = _fit_mixer(model, data, scaler, config, device)
             result.update({"mixer_val_m": mixed["best_val_m"], "alpha": mixed["alpha"],
-                           "mixer_epoch": mixed["best_epoch"],
+                           "mixer_epoch": mixed["best_epoch"], "mixer_arch": config.mixer_arch,
                            "mixer_test_mean_m": mean_error(data.y_test, chosen_pred)})
             checkpoint["mixer_state_dict"] = mixed["state_dict"]
             checkpoint["alpha"] = mixed["alpha"]

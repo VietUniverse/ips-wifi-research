@@ -47,6 +47,8 @@ Preset `configs/bsrbf_rf128_mixer_ap_robust.json` thêm bước chọn 128 AP b�
 
 Trong Colab, chọn `KAN-Mixer (BSRBF-KAN + Residual Mixer)` và `rss_ap_robust`; bộ chọn preset tự dùng preset RF trên. Kích thước 128 là một điểm thử nghiệm, không phải giá trị tối ưu đã được xác nhận. So sánh nên chạy thêm top-k khác và baseline 520 AP với cùng seed/split trước khi kết luận.
 
+Preset `configs/bsrbf_mixer_ap_tokens.json` là biến thể kiến trúc thử nghiệm: mỗi AP giữ một token riêng, đầu vào token gồm RSS đã chuẩn hóa và cờ AP có được quan sát hay không; embedding AP giữ danh tính cột, đặc trưng KAN được đưa vào như ngữ cảnh, sau đó Mixer xử lý cả trục AP (token mixing) và trục channel. Chọn preset này cho KAN-Mixer với `rss_ap_robust`. Kiến trúc cũ `legacy_16x8` vẫn là mặc định để các run/checkpoint trước tiếp tục tương thích. Chưa có kết quả UJI đầy đủ cho preset AP-token; chỉ đánh giá sau khi chạy đủ epochs và chọn checkpoint bằng internal validation.
+
 ### 3. Notebook hợp nhất mã plugin
 
 Ô đầu tự động:
