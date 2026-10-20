@@ -35,7 +35,7 @@ Số dòng lấy từ ZIP bạn cung cấp. Dataset có ít hơn 520 AP được
 
 ### Các model KAN theo bài KSE 2025
 
-Notebook cung cấp năm họ kiến trúc được bài báo so sánh: KAN gốc, FastKAN, BSRBF-KAN, S-KAN và FC-KAN. KAN-Mixer là mở rộng thử nghiệm của repo: giữ nhánh sửa residual Mixer và dùng cùng họ KAN đã chọn làm backbone cũng như token/channel mixer. Chọn model đơn để chạy riêng; các biến thể có Mixer được đặt tên rõ trong menu và cần preset có `with_mixer: true`.
+Notebook cung cấp năm họ kiến trúc được bài báo so sánh: KAN gốc, FastKAN, BSRBF-KAN, S-KAN và FC-KAN. KAN-Mixer là mở rộng thử nghiệm của repo: giữ backbone KAN đã chọn và cho phép chọn riêng loại mạng trộn trên mỗi trục. Trong menu, chọn một model có Mixer rồi chọn một hoặc nhiều cấu hình: KAN token + KAN channel, KAN token + MLP channel, MLP token + KAN channel, hoặc MLP token + MLP channel. Với lựa chọn KAN, notebook dùng đúng họ backbone đã chọn. Mỗi cấu hình ghi riêng config, checkpoint, metrics và biểu đồ; số tham số của Mixer được in trong log để so sánh.
 
 Bài báo gốc: [KSE 2025 proceedings](https://kse2025.kse-conferences.org/wp-content/uploads/sites/10/2025/10/kse-2025-proceedings.pdf), bài “A Comparative Study of Kolmogorov-Arnold Network Models for Robust WiFi Fingerprinting-based Positioning”. Các layer trong repo được cài dựa trên mô tả kiến trúc trong bài báo: B-spline cho KAN, Gaussian RBF cho FastKAN, kết hợp hai basis cho BSRBF-KAN, cổng chọn theo node cho S-KAN, và tương tác tích cho FC-KAN ở tầng ẩn nhỏ để kiểm soát chi phí. Bài báo không cung cấp mã nguồn thực nghiệm đi kèm, vì vậy S-KAN/FC-KAN và các tổ hợp Mixer ở đây là các hiện thực nghiên cứu theo mô tả, không được khẳng định là tái tạo từng chi tiết mã gốc. Quy trình tối ưu của runner cũng là pipeline hiện có của repo, không phải sao chép nguyên xi protocol của bài báo.
 
@@ -47,14 +47,16 @@ Preset `configs/bsrbf_rf128_mixer_ap_robust.json` thêm bước chọn 128 AP b�
 
 Trong Colab, chọn `KAN-Mixer (BSRBF-KAN + Residual Mixer)` và `rss_ap_robust`; bộ chọn preset tự dùng preset RF trên. Kích thước 128 là một điểm thử nghiệm, không phải giá trị tối ưu đã được xác nhận. So sánh nên chạy thêm top-k khác và baseline 520 AP với cùng seed/split trước khi kết luận.
 
+Preset `configs/bsrbf_mixer_ap_tokens.json` là biến thể kiến trúc thử nghiệm: mỗi AP giữ một token riêng, đầu vào token gồm RSS đã chuẩn hóa và cờ AP có được quan sát hay không; embedding AP giữ danh tính cột, đặc trưng KAN được đưa vào như ngữ cảnh, sau đó Mixer xử lý cả trục AP (token mixing) và trục channel. Chọn preset này cho KAN-Mixer với `rss_ap_robust`. Kiến trúc cũ `legacy_16x8` vẫn là mặc định để các run/checkpoint trước tiếp tục tương thích. Trong Colab, mỗi cấu hình token/channel được huấn luyện độc lập; validation chọn epoch và hệ số residual, test chỉ dùng báo cáo cuối. `mixer_isolate_rng` giữ trạng thái ngẫu nhiên sau huấn luyện mixer để lần chạy nhiều tòa nhà không làm đổi khởi tạo backbone giữa các thí nghiệm. Hiện chưa có kết quả UJI đầy đủ cho bốn tổ hợp; cần chạy và đánh giá trước khi kết luận tổ hợp nào tốt hơn.
+
 ### 3. Notebook hợp nhất mã plugin
 
-Ô đầu tự động:
+Ô đầu hỏi nhánh nguồn (Enter để dùng `main`). Khi thử thay đổi đang nằm trong PR, nhập tên nhánh PR, ví dụ `VietUniverse-patch-2`; sau khi PR được merge, dùng `main`. Ô này tự động:
 
-1. Tải mã nền và `configs/` từ `main`.
+1. Tải mã nền và `configs/` từ nhánh đã chọn.
 2. Lấy danh sách nhánh `feature/*` đang có trên GitHub.
-3. Quét từng nhánh và chép các file plugin/config mới vào project Colab.
-4. Giữ file từ `main` nếu cùng đường dẫn đã tồn tại, để plugin chưa merge không ghi đè runner dùng chung.
+3. Quét từng nhánh `feature/*` và chép các file plugin/config mới vào project Colab.
+4. Giữ file từ nhánh nguồn đã chọn nếu cùng đường dẫn đã tồn tại, để plugin chưa merge không ghi đè runner dùng chung.
 5. Cài project, sau đó menu tự phát hiện model và cách xử lý RSS.
 
 Hiện các nhánh đóng góp gồm:

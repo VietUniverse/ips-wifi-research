@@ -139,3 +139,13 @@ class ProtocolTests(unittest.TestCase):
         mixer = ResidualKANMixer(n_blocks=1)
         out = mixer(torch.zeros(2, 520), torch.zeros(2, 64))
         self.assertTrue(bool(torch.allclose(out, torch.zeros_like(out))))
+
+    def test_ap_token_mixer_preserves_ap_ids_and_channel_path(self):
+        mixer = ResidualKANMixer(n_blocks=1, rss_dim=3, arch="ap_token",
+                                 ap_indices=[0, 15, 519])
+        self.assertEqual(tuple(mixer.ap_ids.tolist()), (0, 15, 519))
+        self.assertEqual(mixer.blocks[0].token_net[0].input_dim, 3)
+        self.assertEqual(mixer.blocks[0].channel_net[0].input_dim, 8)
+        out = mixer(torch.tensor([[-0.4, -1.0, 0.8]]), torch.zeros(1, 64))
+        self.assertEqual(tuple(out.shape), (1, 2))
+        self.assertTrue(bool(torch.allclose(out, torch.zeros_like(out))))
