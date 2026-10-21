@@ -46,3 +46,13 @@ Không bắt buộc: `python -m ips.experiments.knn_cli` chạy được ngay. `
 
 - Chạy bằng `knn_cli`, không qua `ips-train`, và không hiện trong `ips-train --list-options`.
 - Mỗi tòa chỉ dùng train nội bộ làm tập tham chiếu (internal validation chỉ để chọn k).
+
+## Quét số WAP (Lần 6.5)
+
+Preset `knn_smoke.json` và `knn_full.json` có khóa `wap_sweep`. Sau phần so sánh theo tòa, runner chạy thêm
+`src/ips/experiments/knn_wap_sweep.py`: xếp hạng WAP bằng Random Forest và Độ phủ chỉ trên train, giữ top-m
+(m = 200 → 300), rồi đưa từng m vào kNN, WKNN 1/d, WKNN 1/d² và quét k.
+Kết quả nằm trong thư mục `wap_sweep` của ZIP (`khao_sat_m_k.csv`, `tong_hop_theo_m.csv`, `chon_m.csv`,
+`bang_tung_m.csv`, `m_sweep.png`) và log `[m-sweep]` trong `console_log.txt`.
+Giao thức khác phần so sánh theo tòa (tham chiếu toàn bộ train, tự vote tòa, k và m chọn trên validationData.csv)
+nên không so trực tiếp. Xóa khóa `wap_sweep` khỏi preset để tắt.
