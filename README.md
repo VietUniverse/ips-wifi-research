@@ -169,6 +169,18 @@ có thể chạy bằng `python -m ips.experiments.joint_mixer --help`. Công c�
 mới và giữ checkpoint ban đầu nếu validation không cải thiện; đây không phải cấu hình
 đã được chứng minh cải thiện độ chính xác.
 
+Một thử nghiệm riêng sau khi `kan_mixer_e2e` chạy xong là refit 5 epoch cố định trên
+toàn bộ training partition (gồm cả internal validation cũ), learning rate 0.00003:
+
+```bash
+python -u -m ips.experiments.refit_direct_mixer --checkpoint-dir /content/runs/kan_mixer_e2e --data-dir /content/data/ujiindoorloc --output-dir /content/runs/kan_mixer_e2e_full_train
+```
+
+Bước refit giữ nguyên scaler của checkpoint, lấy mẫu uniform và dùng cùng augmentation.
+Không chọn epoch bằng test. Vì internal validation đã thành dữ liệu train, output này
+không xuất `validation_predictions.csv` để tránh dùng nó làm validation cho ensemble.
+Đây là phương án thực nghiệm, chưa chứng minh đạt dưới 6 m.
+
 - `trainingData.csv` được chia thành train và internal validation theo nhóm vị trí, để cùng một vị trí không nằm ở cả hai tập.
 - Scaler tọa độ, chọn AP và chọn checkpoint chỉ được fit/tune trên train và internal validation.
 - `validationData.csv` gồm 1.111 mẫu official test; chỉ dùng để báo cáo sau khi đã chọn cấu hình bằng internal validation.
