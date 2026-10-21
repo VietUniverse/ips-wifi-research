@@ -34,6 +34,7 @@ class RunConfig:
     buildings: tuple[int, ...] = (0, 1, 2)
     seed: int = 42
     val_size: float = 0.15
+    validation_group: str = "location"
     batch_size: int = 64
     stage1_epochs: int = 30
     stage2_epochs: int = 80
@@ -43,6 +44,10 @@ class RunConfig:
     mixer_epochs: int = 40
     mixer_patience: int = 12
     mixer_batch_size: int = 128
+    mixer_blocks: int = 2
+    mixer_lr: float = 3e-4
+    mixer_weight_decay: float = 1e-5
+    mixer_metric_coordinate_loss: bool = False
     with_mixer: bool = False
     mixer_arch: str = "legacy_16x8"
     mixer_token_type: str = "kan"
@@ -227,16 +232,19 @@ def _fit_mixer(model, data, scaler, config, device):
                              arch=config.mixer_arch, ap_indices=ap_indices,
                              token_type=config.mixer_token_type,
                              channel_type=config.mixer_channel_type,
+                             n_blocks=config.mixer_blocks,
                              n_spatial_clusters=config.spatial_clusters).to(device)
     mixer_parameters = sum(p.numel() for p in mixer.parameters() if p.requires_grad)
     print(f"Mixer {config.mixer_arch}: token={config.mixer_token_type}, "
           f"channel={config.mixer_channel_type}, KAN family={config.model}, "
           f"trainable parameters={mixer_parameters:,}", flush=True)
-    optimizer = torch.optim.AdamW(mixer.parameters(), lr=3e-4, weight_decay=1e-5)
+    optimizer = torch.optim.AdamW(mixer.parameters(), lr=config.mixer_lr,
+                                  weight_decay=config.mixer_weight_decay)
     base_val = scaler.inverse_transform(val_base.numpy().astype(np.float64))
     best = mean_error(data.y_val, base_val)
     best_state, best_alpha, best_epoch, stale = None, 0.0, 0, 0
     history = []
+    coordinate_scale = torch.as_tensor(scaler.scale_, dtype=torch.float32, device=device)
     print(f"mixer: start {config.mixer_epochs} epochs, {len(loader)} batches/epoch on {device}", flush=True)
     for epoch in range(1, config.mixer_epochs + 1):
         mixer.train()
@@ -249,12 +257,18 @@ def _fit_mixer(model, data, scaler, config, device):
             output = mixer(rss, feat)
             if isinstance(output, tuple):
                 correction, cluster_logits = output
-                loss = coordinate_loss(base + correction, y)
+                coordinate_pred = base + correction
+                loss = (metric_coordinate_loss(coordinate_pred, y, coordinate_scale)
+                        if config.mixer_metric_coordinate_loss
+                        else coordinate_loss(coordinate_pred, y))
                 if cluster_target is not None:
                     loss = loss + config.spatial_aux_weight * F.cross_entropy(
                         cluster_logits, cluster_target)
             else:
-                loss = coordinate_loss(base + output, y)
+                coordinate_pred = base + output
+                loss = (metric_coordinate_loss(coordinate_pred, y, coordinate_scale)
+                        if config.mixer_metric_coordinate_loss
+                        else coordinate_loss(coordinate_pred, y))
             loss.backward()
             nn.utils.clip_grad_norm_(mixer.parameters(), 5.0)
             optimizer.step()
@@ -323,9 +337,11 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
     rows, preds = [], []
     for building in config.buildings:
         data = make_building_data(train, test, building, config.val_size, config.seed,
-                                  config.preprocess, config.preprocess_params)
+                                  config.preprocess, config.preprocess_params,
+                                  validation_group=config.validation_group)
         print(f"building {building}: train={len(data.x_train)} val={len(data.x_val)} "
-              f"test={len(data.x_test)} features={data.x_train.shape[1]} device={device}", flush=True)
+              f"test={len(data.x_test)} features={data.x_train.shape[1]} "
+              f"validation_group={data.validation_group_used} device={device}", flush=True)
         folder = output / f"building_{building}"
         folder.mkdir()
         feature_selection_info = None
@@ -407,6 +423,8 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
         base_val_pred = scaler.inverse_transform(_predict(model, data.x_val, device).astype(np.float64))
         base_pred = scaler.inverse_transform(_predict(model, data.x_test, device).astype(np.float64))
         result = {"building": building, "model": config.model, "preprocess": config.preprocess,
+                  "validation_group_requested": config.validation_group,
+                  "validation_group_used": data.validation_group_used,
                   "n_features": len(data.feature_columns), "best_val_m": best_val,
                   "best_epoch": epoch, "test_mean_m": mean_error(data.y_test, base_pred)}
         if feature_selection_info is not None:

@@ -49,6 +49,19 @@ Trong Colab, chọn `KAN-Mixer (BSRBF-KAN + Residual Mixer)` và `rss_ap_robust`
 
 Preset `configs/bsrbf_mixer_ap_tokens.json` là biến thể kiến trúc thử nghiệm: mỗi AP giữ một token riêng, đầu vào token gồm RSS đã chuẩn hóa và cờ AP có được quan sát hay không; embedding AP giữ danh tính cột, đặc trưng KAN được đưa vào như ngữ cảnh, sau đó Mixer xử lý cả trục AP (token mixing) và trục channel. Chọn preset này cho KAN-Mixer với `rss_ap_robust`. Kiến trúc cũ `legacy_16x8` vẫn là mặc định để các run/checkpoint trước tiếp tục tương thích. Trong Colab, mỗi cấu hình token/channel được huấn luyện độc lập; validation chọn epoch và hệ số residual, test chỉ dùng báo cáo cuối. `mixer_isolate_rng` giữ trạng thái ngẫu nhiên sau huấn luyện mixer để lần chạy nhiều tòa nhà không làm đổi khởi tạo backbone giữa các thí nghiệm. Hiện chưa có kết quả UJI đầy đủ cho bốn tổ hợp; cần chạy và đánh giá trước khi kết luận tổ hợp nào tốt hơn.
 
+### UJI: thử nghiệm tổng quát hóa sang thiết bị mới
+
+Run UJI ngày 2026-10-21 cho thấy sai số mean toàn test khoảng 7.73 m; tòa 1 và 2 là phần khó nhất. Trong bản dữ liệu đang dùng, `USERID` của official test không xuất hiện ở train, và mỗi building chỉ có hai `PHONEID` giao nhau giữa train/test. Vì vậy, validation tách theo vị trí có thể lạc quan hơn khi chọn epoch và tham số cho thiết bị/người dùng mới. Thông tin ID ở official test chỉ dùng để chẩn đoán khác biệt miền; không dùng nhãn tọa độ test để chọn mô hình.
+
+Runner nhận `validation_group: "location"` (mặc định cũ), `"phone"` hoặc `"user"`. Chia theo phone/user chỉ dùng metadata của training partition; runner thử các split cố định và ưu tiên split có đủ các tầng ở cả train lẫn validation. Nếu một building chỉ có dưới ba nhóm thì dùng split vị trí để tránh mất một nửa train; `summary.json` ghi rõ `validation_group_requested` và `validation_group_used`. Tòa 0 hiện rơi vào fallback này vì train chỉ có hai nhóm điện thoại.
+
+Các preset nghiên cứu mới để so sánh tiền xử lý RSS trong điều kiện validation theo thiết bị:
+
+- `configs/bsrbf_mixer_uji_phone_robust_no_aux.json` và `configs/bsrbf_mixer_uji_phone_robust.json`: AP-wise robust scaling; bản thứ hai thêm spatial-cluster auxiliary.
+- `configs/bsrbf_mixer_uji_phone_relative_no_aux.json` và `configs/bsrbf_mixer_uji_phone_relative.json`: trộn RSS tuyệt đối với RSS tương đối theo median mỗi fingerprint; bản thứ hai thêm spatial-cluster auxiliary.
+
+Các preset này cũng bật loss Euclid theo mét, tăng augmentation RSS, giảm Mixer còn một block, hạ learning rate Mixer và tăng weight decay. Đây là giả thuyết cần kiểm nghiệm, chưa phải kết quả cải thiện đã xác nhận. Notebook tự ưu tiên preset `phone` đúng với RSS được chọn và đúng lựa chọn spatial auxiliary. So sánh cấu hình bằng validation; chỉ chạy một lần official test sau khi chốt cấu hình.
+
 ### 3. Notebook hợp nhất mã plugin
 
 Ô đầu hỏi nhánh nguồn (Enter để dùng `main`). Khi thử thay đổi đang nằm trong PR, nhập tên nhánh PR, ví dụ `VietUniverse-patch-2`; sau khi PR được merge, dùng `main`. Ô này tự động:

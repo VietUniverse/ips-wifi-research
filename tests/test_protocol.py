@@ -41,6 +41,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(len(data.test_rows), 4)
         self.assertTrue(set(data.test_rows).issubset(official.index))
 
+    def test_phone_holdout_validation_has_no_phone_leakage(self):
+        train, official = _frame(40, 1), _frame(4, 1)
+        train["PHONEID"] = np.repeat(np.arange(4), 10)
+        data = make_building_data(train, official, 1, seed=42,
+                                  validation_group="phone")
+        self.assertTrue(set(data.train_rows).isdisjoint(data.val_rows))
+        self.assertTrue(set(train.loc[data.train_rows, "PHONEID"]).isdisjoint(
+            set(train.loc[data.val_rows, "PHONEID"])))
+        with self.assertRaisesRegex(ValueError, "requires PHONEID"):
+            make_building_data(_frame(20, 1), official, 1, validation_group="phone")
+
+    def test_sparse_phone_groups_fall_back_to_location_validation(self):
+        train, official = _frame(20, 1), _frame(4, 1)
+        train["PHONEID"] = np.repeat([10, 20], 10)
+        data = make_building_data(train, official, 1, seed=42,
+                                  validation_group="phone")
+        self.assertEqual(data.validation_group_used, "location_fallback_sparse_groups")
+        self.assertLess(len(data.x_val), len(data.x_train))
+
     def test_model_registry_output_shape(self):
         self.assertIn("mlp", available_models())
         self.assertIn("rss_standard", available_preprocessors())
@@ -132,6 +151,25 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(row["rf_original_features"], 1)
             self.assertEqual(row["rf_selected_features"], 1)
             self.assertTrue((base / "run" / "building_1" / "rf_ap_importance.csv").exists())
+
+    def test_runner_trains_one_block_mixer_with_metric_coordinate_loss(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            data_dir = base / "data"
+            data_dir.mkdir()
+            _frame(30, 1).to_csv(data_dir / "trainingData.csv", index=False)
+            _frame(4, 1).to_csv(data_dir / "validationData.csv", index=False)
+            run(data_dir, base / "run", RunConfig(
+                model="bsrbf_kan", buildings=(1,), stage1_epochs=0,
+                stage2_epochs=1, patience=1, with_mixer=True,
+                mixer_arch="ap_token", mixer_token_type="mlp",
+                mixer_channel_type="mlp", mixer_epochs=1,
+                mixer_patience=1, mixer_batch_size=64, mixer_blocks=1,
+                mixer_metric_coordinate_loss=True,
+            ))
+            import json
+            summary = json.loads((base / "run" / "summary.json").read_text())
+            self.assertGreater(summary["by_building"][0]["mixer_parameters"], 0)
 
     def test_bsrbf_layer_and_zero_initialized_mixer(self):
         layer = BSRBF_KANLayer(4, 3, grid_size=4, spline_order=3)

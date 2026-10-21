@@ -287,6 +287,52 @@ class NotebookTests(unittest.TestCase):
             self.assertEqual(namespace["selected_preset_map"][("kan_mixer", "rss_ap_robust")],
                              "configs/bsrbf_mixer_ap_tokens.json")
 
+    def test_phone_domain_preset_respects_preprocess_and_spatial_choice(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        menu = next("".join(c["source"]) for c in cells if c["cell_type"] == "code"
+                    and "selected_family = choose_one" in "".join(c["source"]))
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp)
+            config_dir = project / "configs"
+            config_dir.mkdir()
+            configs = {
+                "bsrbf_mixer_ap_robust.json": {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_ap_robust", "validation_group": "location"},
+                "bsrbf_mixer_uji_phone_robust_no_aux.json": {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_ap_robust", "validation_group": "phone",
+                    "spatial_clusters": 0},
+                "bsrbf_mixer_uji_phone_robust.json": {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_ap_robust", "validation_group": "phone",
+                    "spatial_clusters": 8},
+                "bsrbf_mixer_uji_phone_relative_no_aux.json": {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_global_relative", "validation_group": "phone",
+                    "spatial_clusters": 0},
+            }
+            for name, config in configs.items():
+                (config_dir / name).write_text(json.dumps(config), encoding="utf-8")
+            available = json.dumps({"models": ["bsrbf_kan", "mlp"],
+                                    "preprocessors": ["rss_ap_robust", "rss_global_relative"]})
+            mixer_choice = sorted(["bsrbf_kan", "mlp", "kan", "fastkan", "skan", "fckan",
+                                   "kan_mixer", "kan_spline_mixer", "fastkan_mixer",
+                                   "skan_mixer", "fckan_mixer"]).index("kan_mixer") + 1
+            for spatial_answer, expected in [
+                ("1", "configs/bsrbf_mixer_uji_phone_robust_no_aux.json"),
+                ("2", "configs/bsrbf_mixer_uji_phone_robust.json"),
+            ]:
+                namespace = {"project": project, "Path": Path,
+                             "subprocess": subprocess, "sys": sys}
+                answers = ["1", str(mixer_choice), "1", "1", spatial_answer, ""]
+                with patch.object(subprocess, "check_output", return_value=available), \
+                     patch("builtins.input", side_effect=answers), redirect_stdout(io.StringIO()):
+                    exec(menu, namespace)
+                self.assertEqual(namespace["selected_preset_map"][("kan_mixer", "rss_ap_robust")],
+                                 expected)
+
     def test_direct_mixer_uses_its_own_preset_without_residual_wrapper(self):
         root = Path(__file__).resolve().parents[1]
         notebook = json.loads((root / "notebooks/Colab_Train_UJI.ipynb").read_text(encoding="utf-8"))

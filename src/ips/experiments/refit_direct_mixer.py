@@ -27,7 +27,8 @@ def refit_building(source, output, train, official, config, building, epochs=5, 
         raise ValueError("This experiment accepts only the direct kan_mixer_e2e architecture")
     checkpoint = torch.load(source / f"building_{building}/checkpoint.pt", map_location="cpu", weights_only=False)
     data = make_building_data(train, official, building, config.get("val_size", .15), config.get("seed", 42),
-                              config["preprocess"], config.get("preprocess_params", {}))
+                              config["preprocess"], config.get("preprocess_params", {}),
+                              validation_group=config.get("validation_group", "location"))
     if checkpoint["ap_columns"] != data.feature_columns or checkpoint["preprocess_state"] != data.preprocess_state:
         raise ValueError("Checkpoint preprocessing does not match reconstructed data")
     mean, scale = np.asarray(checkpoint["scaler_mean"]), np.asarray(checkpoint["scaler_scale"])
