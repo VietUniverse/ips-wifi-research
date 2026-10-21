@@ -159,7 +159,8 @@ def run_joint(checkpoint_dir, data_dir, output_dir, epochs=25, patience=6,
         np.random.seed(seed + building)
         checkpoint = torch.load(source / f"building_{building}" / "checkpoint.pt", map_location="cpu", weights_only=False)
         data = make_building_data(train, official, building, config.get("val_size", .15), config.get("seed", 42),
-                                  config.get("preprocess", "rss_standard"), config.get("preprocess_params", {}))
+                                  config.get("preprocess", "rss_standard"), config.get("preprocess_params", {}),
+                                  validation_group=config.get("validation_group", "location"))
         if data.feature_columns != checkpoint["ap_columns"]:
             raise ValueError("Checkpoint feature columns differ from reconstructed data")
         if "preprocess_state" in checkpoint and data.preprocess_state != checkpoint["preprocess_state"]:

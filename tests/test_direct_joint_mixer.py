@@ -1,6 +1,9 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 from torch import nn
 
@@ -77,6 +80,35 @@ class DirectJointMixerTests(unittest.TestCase):
         coordinates = to_meters(np.array([[.01, .02]], np.float32), [0., 4864900.], [1., 1.])
         self.assertEqual(coordinates.dtype, np.float64)
         self.assertAlmostEqual(coordinates[0, 1] - 4864900., .02, places=7)
+
+    def test_full_refit_consumes_all_training_rows_and_exports_no_validation_for_ensemble(self):
+        from sklearn.preprocessing import StandardScaler
+        from ips.data.uji import AP_COLUMNS, make_building_data
+        from ips.experiments.refit_direct_mixer import refit_building
+        train = pd.DataFrame(np.full((24, 520), -80.), columns=AP_COLUMNS)
+        train["LONGITUDE"] = np.arange(24, dtype=float)
+        train["LATITUDE"] = 4864900. + np.arange(24, dtype=float)
+        train["BUILDINGID"], train["FLOOR"] = 0, 0
+        official = train.iloc[:4].copy()
+        data = make_building_data(train, official, 0)
+        scaler = StandardScaler().fit(data.y_train)
+        model = DirectKANMixer(520)
+        checkpoint = {"model": "kan_mixer_e2e", "state_dict": snapshot(model),
+                      "scaler_mean": scaler.mean_, "scaler_scale": scaler.scale_,
+                      "ap_columns": data.feature_columns, "preprocess_state": data.preprocess_state}
+        config = {"model": "kan_mixer_e2e", "preprocess": "rss_standard", "batch_size": 24,
+                  "augment_gain_std": 0., "augment_noise_std": 0., "augment_dropout_prob": 0.}
+        with tempfile.TemporaryDirectory() as temp:
+            source, output = Path(temp) / "source", Path(temp) / "output"
+            (source / "building_0").mkdir(parents=True)
+            torch.save(checkpoint, source / "building_0/checkpoint.pt")
+            frame, score = refit_building(source, output, train, official, config, 0, epochs=1)
+            self.assertEqual(score["n_train"], 24)
+            self.assertEqual(len(frame), 4)
+            self.assertTrue(np.isfinite(frame["error_m"]).all())
+            self.assertFalse((output / "building_0/validation_predictions.csv").exists())
+            saved = torch.load(output / "building_0/checkpoint.pt", weights_only=False)
+            self.assertEqual(saved["full_train_refit"]["n"], 24)
 
 
 if __name__ == "__main__":
