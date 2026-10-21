@@ -28,6 +28,7 @@ class KNNConfig:
     timing_repeats: int = 3
     max_train: int | None = None          # chỉ dùng cho smoke: lấy mẫu con
     max_test: int | None = None
+    wap_sweep: dict | None = None         # có khóa này thì chạy thêm luồng quét số WAP (Lần 6.5), xem knn_wap_sweep.py
 
 
 @dataclass
@@ -147,4 +148,11 @@ def run(data_dir, output_dir, cfg, loader=None, builder=None):
     cmp_.run_all()
     files = cmp_.export(out)
     print("\nĐã lưu vào", out, ":", ", ".join(files))
+    if cfg.wap_sweep:
+        from .knn_wap_sweep import run_wap_sweep
+        try:
+            run_wap_sweep(train, test, cfg, out / "wap_sweep")
+        except Exception as error:      # kết quả chính đã lưu xong; lỗi ở đây không được làm mất chúng
+            import traceback
+            print(f"[m-sweep] LỖI, bỏ qua quét số WAP: {error}\n{traceback.format_exc()}")
     return cmp_
