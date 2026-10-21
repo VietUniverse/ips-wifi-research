@@ -1,0 +1,17 @@
+{
+  "model": "kan_mixer_e2e",
+  "preprocess": "rss_standard",
+  "buildings": [0, 1, 2],
+  "seed": 42,
+  "batch_size": 128,
+  "stage1_epochs": 0,
+  "stage2_epochs": 100,
+  "stage2_lr": 0.0003,
+  "metric_coordinate_loss": true,
+  "patience": 15,
+  "with_mixer": false,
+  "balance_locations": true,
+  "augment_gain_std": 0.10,
+  "augment_noise_std": 0.025,
+  "augment_dropout_prob": 0.05
+}
