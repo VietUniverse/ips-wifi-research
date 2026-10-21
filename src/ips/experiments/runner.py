@@ -37,6 +37,8 @@ class RunConfig:
     batch_size: int = 64
     stage1_epochs: int = 30
     stage2_epochs: int = 80
+    stage2_lr: float = 1e-4
+    metric_coordinate_loss: bool = False
     patience: int = 15
     mixer_epochs: int = 40
     mixer_patience: int = 12
@@ -73,6 +75,15 @@ def coordinate_loss(pred, target):
     return torch.linalg.vector_norm(pred - target, dim=1).mean() + 0.25 * F.mse_loss(pred, target)
 
 
+def metric_coordinate_loss(pred, target, coordinate_scale):
+    """Optimize Euclidean meters despite anisotropic standardized targets.
+
+    Dividing by one constant only stabilizes gradient magnitude; it does not
+    change the relative weighting of x/y or the optimum of mean distance.
+    """
+    return torch.linalg.vector_norm((pred - target) * coordinate_scale, dim=1).mean() / coordinate_scale.mean()
+
+
 def _device(config):
     return torch.device("cuda" if torch.cuda.is_available() else "cpu") if config.device == "auto" else torch.device(config.device)
 
@@ -88,12 +99,13 @@ def _predict(model, x, device, batch_size=256):
 
 
 def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr,
-               stage_name, trainable_only=False):
+               stage_name, trainable_only=False, use_metric_loss=False):
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5)
     best, best_state, best_epoch, stale = float("inf"), None, 0, 0
     history = []
+    coordinate_scale = torch.as_tensor(scaler.scale_, dtype=torch.float32, device=device)
     print(f"{stage_name}: start {epochs} epochs, {len(loader)} batches/epoch on {device}", flush=True)
     for epoch in range(1, epochs + 1):
         model.train()
@@ -102,7 +114,9 @@ def _fit_stage(model, loader, x_val, y_val, scaler, device, epochs, patience, lr
         for batch_index, (xb, yb) in enumerate(loader, 1):
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad(set_to_none=True)
-            loss = coordinate_loss(model(xb), yb)
+            pred = model(xb)
+            loss = (metric_coordinate_loss(pred, yb, coordinate_scale) if use_metric_loss
+                    else coordinate_loss(pred, yb))
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite loss in {stage_name}")
             loss.backward()
@@ -387,8 +401,8 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
             for p in model.parameters():
                 p.requires_grad_(True)
         best_val, epoch, h = _fit_stage(model, train_loader, data.x_val, data.y_val, scaler,
-                                        device, config.stage2_epochs, config.patience, 1e-4,
-                                        "stage2")
+                                        device, config.stage2_epochs, config.patience, config.stage2_lr,
+                                        "stage2", use_metric_loss=config.metric_coordinate_loss)
         history += h
         base_val_pred = scaler.inverse_transform(_predict(model, data.x_val, device).astype(np.float64))
         base_pred = scaler.inverse_transform(_predict(model, data.x_test, device).astype(np.float64))

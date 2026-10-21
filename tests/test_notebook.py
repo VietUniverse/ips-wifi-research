@@ -171,14 +171,14 @@ class NotebookTests(unittest.TestCase):
                          "skan_mixer", "fckan_mixer"]
         mixer_choice = sorted(available_ids).index("kan_mixer") + 1
         with patch.object(subprocess, "check_output", return_value=available), \
-             patch("builtins.input", side_effect=["1", str(mixer_choice), "1", "1", ""]) as ask, \
+             patch("builtins.input", side_effect=["1", str(mixer_choice), "1", "1", "1", ""]) as ask, \
              redirect_stdout(io.StringIO()) as output:
             exec(menu, namespace)
         self.assertEqual(namespace["selected_models"], ["kan_mixer"])
         preset = namespace["selected_preset_map"][("kan_mixer", "rss_standard")]
         self.assertTrue(json.loads((namespace["project"] / preset).read_text())["with_mixer"])
         self.assertIn("KAN-Mixer (BSRBF-KAN + Residual Mixer)", output.getvalue())
-        self.assertEqual(ask.call_count, 5)
+        self.assertEqual(ask.call_count, 6)
 
     def test_mixer_can_be_selected_alongside_its_plain_backbone(self):
         path = Path(__file__).resolve().parents[1] / "notebooks" / "Colab_Train_UJI.ipynb"
@@ -190,7 +190,7 @@ class NotebookTests(unittest.TestCase):
         namespace = {"project": path.parents[1], "Path": Path,
                      "subprocess": subprocess, "sys": sys}
         with patch.object(subprocess, "check_output", return_value=available), \
-             patch("builtins.input", side_effect=["1", "1,7", "1", "1", ""]), \
+             patch("builtins.input", side_effect=["1", "1,7", "1", "1", "1", ""]), \
              redirect_stdout(io.StringIO()):
             exec(menu, namespace)
 
@@ -281,8 +281,26 @@ class NotebookTests(unittest.TestCase):
                              "skan_mixer", "fckan_mixer"]
             mixer_choice = sorted(available_ids).index("kan_mixer") + 1
             with patch.object(subprocess, "check_output", return_value=available), \
-                 patch("builtins.input", side_effect=["1", str(mixer_choice), "1", "1", "", ""]), \
+                 patch("builtins.input", side_effect=["1", str(mixer_choice), "1", "1", "1", ""]), \
                  redirect_stdout(io.StringIO()):
                 exec(menu, namespace)
             self.assertEqual(namespace["selected_preset_map"][("kan_mixer", "rss_ap_robust")],
                              "configs/bsrbf_mixer_ap_tokens.json")
+
+    def test_direct_mixer_uses_its_own_preset_without_residual_wrapper(self):
+        root = Path(__file__).resolve().parents[1]
+        notebook = json.loads((root / "notebooks/Colab_Train_UJI.ipynb").read_text(encoding="utf-8"))
+        menu = next("".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code"
+                    and "selected_family = choose_one" in "".join(c["source"]))
+        available = json.dumps({"models": ["kan_mixer_e2e"], "preprocessors": ["rss_standard"]})
+        namespace = {"project": root, "Path": Path, "subprocess": subprocess, "sys": sys}
+        ids = sorted(["bsrbf_kan", "kan", "fastkan", "skan", "fckan", "kan_mixer",
+                      "kan_spline_mixer", "fastkan_mixer", "skan_mixer", "fckan_mixer", "kan_mixer_e2e"])
+        with patch.object(subprocess, "check_output", return_value=available), \
+             patch("builtins.input", side_effect=["1", str(ids.index("kan_mixer_e2e") + 1), "1", ""]), \
+             redirect_stdout(io.StringIO()):
+            exec(menu, namespace)
+        self.assertEqual(namespace["selected_models"], ["kan_mixer_e2e"])
+        preset = namespace["selected_preset_map"][("kan_mixer_e2e", "rss_standard")]
+        self.assertEqual(preset, "configs/kan_mixer_e2e.json")
+        self.assertFalse(namespace["preset_settings"][preset]["with_mixer"])

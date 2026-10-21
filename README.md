@@ -133,6 +133,42 @@ Thêm module trong `src/ips/data/preprocessors/` khai báo `PREPROCESS_NAME` và
 
 ## Giao thức đánh giá UJIIndoorLoc
 
+### KAN-Mixer trực tiếp (thử nghiệm)
+
+Trong Colab chọn **Neural → KAN-Mixer trực tiếp (token KAN + channel KAN, train end-to-end)**,
+RSS **rss_standard**. Notebook tự chọn `configs/kan_mixer_e2e.json`.
+
+Kiến trúc `kan_mixer_e2e` học đồng thời toàn mạng:
+
+```text
+RSS + RSS tương đối trong một lần quét + mặt nạ AP
+  → Linear embedding → 32 token × 16 channel
+  → 2 khối [LayerNorm → token BSRBF-KAN → residual
+             LayerNorm → channel BSRBF-KAN → residual]
+  → mean/max pooling → MLP head → (x, y)
+```
+
+Đây là một mạng dự đoán trực tiếp, với hai trục Mixer dùng BSRBF-KAN và đầu ra MLP.
+`with_mixer: false` trong preset nghĩa là **không ghép thêm residual Mixer cũ**;
+bản thân model đã có các khối Mixer. Không dùng preset residual BSRBF cho model này.
+
+Preset dùng loss Euclidean theo mét, learning rate 0.0003, tối đa 100 epoch,
+early stopping 15 epoch và cân bằng mẫu theo vị trí. RSS được tăng cường trong train
+bằng lệch mức tín hiệu, nhiễu và bỏ AP. Validation/test không tăng cường dữ liệu.
+Checkpoint được chọn bằng internal validation. Chưa có bằng chứng preset này đạt
+mean error dưới 6 m; xem báo cáo thực nghiệm trước khi dùng số liệu trong bài báo.
+
+Lệnh tương đương sau khi cài package:
+
+```bash
+python -u -m ips.experiments.cli --config configs/kan_mixer_e2e.json --data-dir /content/data/ujiindoorloc --output-dir /content/runs/kan_mixer_e2e
+```
+
+Thử nghiệm fine-tune đồng thời phần cuối KAN backbone và residual Mixer từ checkpoint
+có thể chạy bằng `python -m ips.experiments.joint_mixer --help`. Công cụ lưu vào thư mục
+mới và giữ checkpoint ban đầu nếu validation không cải thiện; đây không phải cấu hình
+đã được chứng minh cải thiện độ chính xác.
+
 - `trainingData.csv` được chia thành train và internal validation theo nhóm vị trí, để cùng một vị trí không nằm ở cả hai tập.
 - Scaler tọa độ, chọn AP và chọn checkpoint chỉ được fit/tune trên train và internal validation.
 - `validationData.csv` gồm 1.111 mẫu official test; chỉ dùng để báo cáo sau khi đã chọn cấu hình bằng internal validation.
