@@ -9,5 +9,11 @@
   "k_ref": 13,
   "timing_repeats": 1,
   "max_train": 4000,
-  "max_test": 400
+  "max_test": 400,
+  "wap_sweep": {
+    "rankings": ["rf", "coverage"],
+    "m_values": [200, 250, 300],
+    "n_trees": 20,
+    "n_rep": 1
+  }
 }

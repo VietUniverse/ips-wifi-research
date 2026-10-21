@@ -7,5 +7,11 @@
   "val_size": 0.15,
   "k_max": 20,
   "k_ref": 13,
-  "timing_repeats": 3
+  "timing_repeats": 3,
+  "wap_sweep": {
+    "rankings": ["rf", "coverage"],
+    "m_values": [200, 210, 220, 230, 240, 250, 260, 270, 280, 290, 300],
+    "n_trees": 100,
+    "n_rep": 3
+  }
 }
