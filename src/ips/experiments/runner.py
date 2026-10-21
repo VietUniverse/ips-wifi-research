@@ -267,10 +267,14 @@ def _fit_mixer(model, data, scaler, config, device):
             break
     if best_state is not None:
         mixer.load_state_dict(best_state)
+    delta_val = (_mixer_correction(mixer, data.x_val, val_feat, device)
+                 if best_alpha else np.zeros_like(val_base.numpy()))
+    pred_val_norm = val_base.numpy().astype(np.float64) + best_alpha * delta_val
     delta_test = (_mixer_correction(mixer, data.x_test, test_feat, device)
                   if best_alpha else np.zeros_like(test_base.numpy()))
     pred_norm = test_base.numpy().astype(np.float64) + best_alpha * delta_test
-    return scaler.inverse_transform(pred_norm), {"alpha": best_alpha, "best_epoch": best_epoch,
+    return scaler.inverse_transform(pred_norm), {"val_pred": scaler.inverse_transform(pred_val_norm),
+             "alpha": best_alpha, "best_epoch": best_epoch,
              "best_val_m": best, "state_dict": best_state, "history": history,
              "trainable_parameters": mixer_parameters,
              "val_spatial_cluster_accuracy": (
@@ -386,6 +390,7 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
                                         device, config.stage2_epochs, config.patience, 1e-4,
                                         "stage2")
         history += h
+        base_val_pred = scaler.inverse_transform(_predict(model, data.x_val, device).astype(np.float64))
         base_pred = scaler.inverse_transform(_predict(model, data.x_test, device).astype(np.float64))
         result = {"building": building, "model": config.model, "preprocess": config.preprocess,
                   "n_features": len(data.feature_columns), "best_val_m": best_val,
@@ -394,6 +399,7 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
             result["rf_original_features"] = feature_selection_info["original_features"]
             result["rf_selected_features"] = feature_selection_info["selected_features"]
         chosen_pred = base_pred
+        chosen_val_pred = base_val_pred
         checkpoint = {"model": config.model, "building": building,
                       "preprocess": config.preprocess, "preprocess_params": config.preprocess_params,
                       "state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
@@ -410,6 +416,7 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
             rng_context = torch.random.fork_rng(devices=cuda_devices) if config.mixer_isolate_rng else nullcontext()
             with rng_context:
                 chosen_pred, mixed = _fit_mixer(model, data, scaler, config, device)
+            chosen_val_pred = mixed["val_pred"]
             result.update({"mixer_val_m": mixed["best_val_m"], "alpha": mixed["alpha"],
                            "mixer_epoch": mixed["best_epoch"], "mixer_arch": config.mixer_arch,
                            "mixer_token_type": config.mixer_token_type,
@@ -435,6 +442,11 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
                                    "pred_x": chosen_pred[:, 0], "pred_y": chosen_pred[:, 1],
                                    "error_m": np.linalg.norm(chosen_pred - data.y_test, axis=1)})
         per_sample.to_csv(folder / "predictions.csv", index=False)
+        val_per_sample = pd.DataFrame({"source_row": data.val_rows, "building": building,
+                                       "true_x": data.y_val[:, 0], "true_y": data.y_val[:, 1],
+                                       "pred_x": chosen_val_pred[:, 0], "pred_y": chosen_val_pred[:, 1],
+                                       "error_m": np.linalg.norm(chosen_val_pred - data.y_val, axis=1)})
+        val_per_sample.to_csv(folder / "validation_predictions.csv", index=False)
         preds.append(per_sample)
         result.update(metrics(data.y_test, chosen_pred))
         rows.append(result)
