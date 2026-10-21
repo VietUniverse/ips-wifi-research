@@ -333,6 +333,70 @@ class NotebookTests(unittest.TestCase):
                 self.assertEqual(namespace["selected_preset_map"][("kan_mixer", "rss_ap_robust")],
                                  expected)
 
+    def test_uji_robust_defaults_to_conservative_baseline_and_explicit_split(self):
+        root = Path(__file__).resolve().parents[1]
+        cells = json.loads((root / "notebooks/Colab_Train_UJI.ipynb").read_text(
+            encoding="utf-8"))["cells"]
+        menu = next("".join(c["source"]) for c in cells if c["cell_type"] == "code"
+                    and "selected_family = choose_one" in "".join(c["source"]))
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp)
+            config_dir = project / "configs"
+            config_dir.mkdir()
+            for name, validation_group, spatial_clusters, mixer_blocks in [
+                ("bsrbf_mixer_uji_phone_robust.json", "phone", 8, 1),
+                ("bsrbf_mixer_uji_baseline_spatial.json", "location", 8, 2),
+                ("bsrbf_mixer_uji_baseline_no_spatial.json", "location", 0, 2),
+            ]:
+                config = {
+                    "model": "bsrbf_kan", "with_mixer": True,
+                    "preprocess": "rss_ap_robust", "mixer_arch": "ap_token",
+                    "validation_group": validation_group,
+                    "spatial_clusters": spatial_clusters,
+                    "mixer_blocks": mixer_blocks,
+                }
+                (config_dir / name).write_text(json.dumps(config), encoding="utf-8")
+
+            available = json.dumps({"models": ["bsrbf_kan"],
+                                    "preprocessors": ["rss_ap_robust"]})
+            mixer_choice = sorted(["bsrbf_kan", "kan", "fastkan", "skan", "fckan",
+                                   "kan_mixer", "kan_spline_mixer", "fastkan_mixer",
+                                   "skan_mixer", "fckan_mixer"]).index("kan_mixer") + 1
+            namespace = {
+                "project": project, "Path": Path, "subprocess": subprocess, "sys": sys,
+                "dataset_runs": [{"key": "ujiindoorloc"}],
+            }
+            # family, model, RSS, validation=location, token/channel variant,
+            # spatial auxiliary=yes, RSS params=defaults.
+            answers = ["1", str(mixer_choice), "1", "1", "1", "2", ""]
+            with patch.object(subprocess, "check_output", return_value=available), \
+                 patch("builtins.input", side_effect=answers), \
+                 redirect_stdout(io.StringIO()):
+                exec(menu, namespace)
+
+        self.assertEqual(namespace["uji_validation_group"], "location")
+        self.assertEqual(namespace["selected_preset_map"][("kan_mixer", "rss_ap_robust")],
+                         "configs/bsrbf_mixer_uji_baseline_spatial.json")
+
+    def test_uji_phone_validation_is_an_explicit_choice(self):
+        path = Path(__file__).resolve().parents[1] / "notebooks/Colab_Train_UJI.ipynb"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        menu = next("".join(c["source"]) for c in cells if c["cell_type"] == "code"
+                    and "selected_family = choose_one" in "".join(c["source"]))
+        available = json.dumps({"models": ["bsrbf_kan"],
+                                "preprocessors": ["rss_ap_robust"]})
+        ids = sorted(["bsrbf_kan", "kan", "fastkan", "skan", "fckan", "kan_mixer",
+                      "kan_spline_mixer", "fastkan_mixer", "skan_mixer", "fckan_mixer"])
+        namespace = {"project": Path(__file__).resolve().parents[1], "Path": Path,
+                     "subprocess": subprocess, "sys": sys,
+                     "dataset_runs": [{"key": "ujiindoorloc"}]}
+        answers = ["1", str(ids.index("kan_mixer") + 1), "1", "2", "1", "1", ""]
+        with patch.object(subprocess, "check_output", return_value=available), \
+             patch("builtins.input", side_effect=answers), \
+             redirect_stdout(io.StringIO()):
+            exec(menu, namespace)
+        self.assertEqual(namespace["uji_validation_group"], "phone")
+
     def test_direct_mixer_uses_its_own_preset_without_residual_wrapper(self):
         root = Path(__file__).resolve().parents[1]
         notebook = json.loads((root / "notebooks/Colab_Train_UJI.ipynb").read_text(encoding="utf-8"))
