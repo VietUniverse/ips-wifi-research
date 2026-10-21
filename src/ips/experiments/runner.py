@@ -15,6 +15,7 @@ import pandas as pd
 import torch
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.cluster import KMeans
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
@@ -45,6 +46,8 @@ class RunConfig:
     mixer_token_type: str = "kan"
     mixer_channel_type: str = "kan"
     mixer_isolate_rng: bool = False
+    spatial_clusters: int = 0
+    spatial_aux_weight: float = 0.10
     rf_feature_selection: bool = False
     rf_top_k: int = 128
     rf_n_estimators: int = 200
@@ -151,8 +154,27 @@ def _mixer_correction(mixer, x, features, device, batch_size=256):
     for start in range(0, len(x), batch_size):
         rss = torch.as_tensor(x[start:start + batch_size], device=device)
         feat = features[start:start + batch_size].to(device)
-        parts.append(mixer(rss, feat).cpu().numpy())
+        output = mixer(rss, feat)
+        correction = output[0] if isinstance(output, tuple) else output
+        parts.append(correction.cpu().numpy())
     return np.concatenate(parts)
+
+
+@torch.no_grad()
+def _mixer_spatial_accuracy(mixer, x, features, labels, device, batch_size=256):
+    if not getattr(mixer, "n_spatial_clusters", 0):
+        return None
+    mixer.eval()
+    correct, count = 0, 0
+    for start in range(0, len(x), batch_size):
+        rss = torch.as_tensor(x[start:start + batch_size], device=device)
+        feat = features[start:start + batch_size].to(device)
+        output = mixer(rss, feat)
+        logits = output[1]
+        target = torch.as_tensor(labels[start:start + batch_size], device=device)
+        correct += int((logits.argmax(dim=1) == target).sum().item())
+        count += len(target)
+    return correct / max(count, 1)
 
 
 def _fit_mixer(model, data, scaler, config, device):
@@ -163,7 +185,21 @@ def _fit_mixer(model, data, scaler, config, device):
     val_feat, val_base = _features_and_baseline(model, data.x_val, device)
     test_feat, test_base = _features_and_baseline(model, data.x_test, device)
     target = torch.as_tensor(scaler.transform(data.y_train), dtype=torch.float32)
-    loader = DataLoader(TensorDataset(torch.as_tensor(data.x_train), train_feat, train_base, target),
+    train_parts = [torch.as_tensor(data.x_train), train_feat, train_base, target]
+    val_cluster_labels = None
+    if config.spatial_clusters:
+        if config.mixer_arch != "ap_token":
+            raise ValueError("spatial_clusters requires mixer_arch='ap_token'")
+        if config.spatial_clusters < 2 or config.spatial_clusters >= len(data.y_train):
+            raise ValueError("spatial_clusters must be in [2, number_of_train_samples)")
+        if config.spatial_aux_weight < 0:
+            raise ValueError("spatial_aux_weight must be non-negative")
+        clusterer = KMeans(n_clusters=config.spatial_clusters, n_init=10,
+                           random_state=config.seed)
+        train_cluster_labels = clusterer.fit_predict(data.y_train).astype(np.int64)
+        val_cluster_labels = clusterer.predict(data.y_val).astype(np.int64)
+        train_parts.append(torch.as_tensor(train_cluster_labels, dtype=torch.long))
+    loader = DataLoader(TensorDataset(*train_parts),
                         batch_size=config.mixer_batch_size, shuffle=True)
     ap_indices = None
     if config.mixer_arch == "ap_token":
@@ -176,7 +212,8 @@ def _fit_mixer(model, data, scaler, config, device):
     mixer = ResidualKANMixer(family=config.model, rss_dim=data.x_train.shape[1],
                              arch=config.mixer_arch, ap_indices=ap_indices,
                              token_type=config.mixer_token_type,
-                             channel_type=config.mixer_channel_type).to(device)
+                             channel_type=config.mixer_channel_type,
+                             n_spatial_clusters=config.spatial_clusters).to(device)
     mixer_parameters = sum(p.numel() for p in mixer.parameters() if p.requires_grad)
     print(f"Mixer {config.mixer_arch}: token={config.mixer_token_type}, "
           f"channel={config.mixer_channel_type}, KAN family={config.model}, "
@@ -191,10 +228,19 @@ def _fit_mixer(model, data, scaler, config, device):
         mixer.train()
         total = 0.0
         started = time.perf_counter()
-        for batch_index, (rss, feat, base, y) in enumerate(loader, 1):
-            rss, feat, base, y = (v.to(device) for v in (rss, feat, base, y))
+        for batch_index, batch in enumerate(loader, 1):
+            rss, feat, base, y = (v.to(device) for v in batch[:4])
+            cluster_target = batch[4].to(device) if len(batch) > 4 else None
             optimizer.zero_grad(set_to_none=True)
-            loss = coordinate_loss(base + mixer(rss, feat), y)
+            output = mixer(rss, feat)
+            if isinstance(output, tuple):
+                correction, cluster_logits = output
+                loss = coordinate_loss(base + correction, y)
+                if cluster_target is not None:
+                    loss = loss + config.spatial_aux_weight * F.cross_entropy(
+                        cluster_logits, cluster_target)
+            else:
+                loss = coordinate_loss(base + output, y)
             loss.backward()
             nn.utils.clip_grad_norm_(mixer.parameters(), 5.0)
             optimizer.step()
@@ -226,7 +272,11 @@ def _fit_mixer(model, data, scaler, config, device):
     pred_norm = test_base.numpy().astype(np.float64) + best_alpha * delta_test
     return scaler.inverse_transform(pred_norm), {"alpha": best_alpha, "best_epoch": best_epoch,
              "best_val_m": best, "state_dict": best_state, "history": history,
-             "trainable_parameters": mixer_parameters}
+             "trainable_parameters": mixer_parameters,
+             "val_spatial_cluster_accuracy": (
+                 _mixer_spatial_accuracy(mixer, data.x_val, val_feat,
+                                         val_cluster_labels, device)
+                 if val_cluster_labels is not None else None)}
 
 
 def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
@@ -235,6 +285,8 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
             raise ValueError("mixer_token_type and mixer_channel_type must be 'kan' or 'mlp'")
         if config.mixer_arch not in {"legacy_16x8", "ap_token"} or config.mixer_batch_size < 1:
             raise ValueError("Invalid mixer_arch or mixer_batch_size")
+        if config.spatial_clusters and config.mixer_arch != "ap_token":
+            raise ValueError("spatial_clusters requires mixer_arch='ap_token'")
     kan_families = {"kan", "fastkan", "bsrbf_kan", "skan", "fckan"}
     if config.with_mixer and config.model not in kan_families:
         raise ValueError(f"with_mixer requires a KAN model; choose one of {sorted(kan_families)}")
@@ -363,10 +415,15 @@ def run(data_dir: str | Path, output_dir: str | Path, config: RunConfig):
                            "mixer_token_type": config.mixer_token_type,
                            "mixer_channel_type": config.mixer_channel_type,
                            "mixer_parameters": mixed["trainable_parameters"],
+                           "spatial_clusters": config.spatial_clusters,
+                           "spatial_aux_weight": config.spatial_aux_weight,
+                           "val_spatial_cluster_accuracy": mixed["val_spatial_cluster_accuracy"],
                            "mixer_test_mean_m": mean_error(data.y_test, chosen_pred)})
             checkpoint.update(mixer_token_type=config.mixer_token_type,
                               mixer_channel_type=config.mixer_channel_type,
-                              mixer_family=config.model, mixer_rss_dim=data.x_train.shape[1])
+                              mixer_family=config.model, mixer_rss_dim=data.x_train.shape[1],
+                              spatial_clusters=config.spatial_clusters,
+                              spatial_aux_weight=config.spatial_aux_weight)
             checkpoint["mixer_state_dict"] = mixed["state_dict"]
             checkpoint["alpha"] = mixed["alpha"]
             history += mixed["history"]

@@ -38,9 +38,14 @@ class SmallKANMixerBlock(nn.Module):
 class ResidualKANMixer(nn.Module):
     def __init__(self, n_blocks=MIXER_BLOCKS, family="bsrbf_kan", rss_dim=520,
                  arch="legacy_16x8", ap_indices=None,
-                 token_type="kan", channel_type="kan"):
+                 token_type="kan", channel_type="kan", n_spatial_clusters=0):
         super().__init__()
         self.arch = arch
+        self.n_spatial_clusters = int(n_spatial_clusters)
+        if self.n_spatial_clusters < 0:
+            raise ValueError("n_spatial_clusters must be non-negative")
+        if self.n_spatial_clusters and arch != "ap_token":
+            raise ValueError("spatial-cluster supervision requires arch='ap_token'")
         if arch == "legacy_16x8":
             self.rss_projection = nn.Sequential(nn.Linear(rss_dim, 64), nn.LayerNorm(64))
             self.blocks = nn.Sequential(*[SmallKANMixerBlock(
@@ -63,8 +68,15 @@ class ResidualKANMixer(nn.Module):
                                    token_type=token_type, channel_type=channel_type)
                 for _ in range(n_blocks)
             ])
-            self.head = nn.Sequential(nn.LayerNorm(rss_dim * 8), nn.Linear(rss_dim * 8, 128),
+            head_input = rss_dim * 8 + self.n_spatial_clusters
+            self.head = nn.Sequential(nn.LayerNorm(head_input), nn.Linear(head_input, 128),
                                       nn.SiLU(), nn.Dropout(0.1), nn.Linear(128, 2))
+            if self.n_spatial_clusters:
+                # The cluster task teaches the AP-token representation to retain
+                # coarse spatial information. Its soft probabilities also
+                # condition the coordinate correction.
+                self.spatial_head = nn.Sequential(nn.Linear(72, 32), nn.GELU(),
+                                                  nn.Linear(32, self.n_spatial_clusters))
         else:
             raise ValueError(f"Unknown KAN-Mixer architecture: {arch}")
         nn.init.zeros_(self.head[-1].weight)
@@ -79,6 +91,13 @@ class ResidualKANMixer(nn.Module):
             tokens = tokens + self.feature_context(features).unsqueeze(1)
         else:
             tokens = torch.cat([features, self.rss_projection(rssi)], dim=1).reshape(-1, 16, 8)
-        return self.head(self.blocks(tokens).flatten(1))
+        mixed = self.blocks(tokens)
+        flat = mixed.flatten(1)
+        if self.n_spatial_clusters:
+            context = torch.cat((features, mixed.mean(dim=1)), dim=1)
+            cluster_logits = self.spatial_head(context)
+            correction = self.head(torch.cat((flat, cluster_logits.softmax(dim=1)), dim=1))
+            return correction, cluster_logits
+        return self.head(flat)
 
 
