@@ -60,7 +60,9 @@ Các preset nghiên cứu mới để so sánh tiền xử lý RSS trong điều
 - `configs/bsrbf_mixer_uji_phone_robust_no_aux.json` và `configs/bsrbf_mixer_uji_phone_robust.json`: AP-wise robust scaling; bản thứ hai thêm spatial-cluster auxiliary.
 - `configs/bsrbf_mixer_uji_phone_relative_no_aux.json` và `configs/bsrbf_mixer_uji_phone_relative.json`: trộn RSS tuyệt đối với RSS tương đối theo median mỗi fingerprint; bản thứ hai thêm spatial-cluster auxiliary.
 
-Các preset này cũng bật loss Euclid theo mét, tăng augmentation RSS, giảm Mixer còn một block, hạ learning rate Mixer và tăng weight decay. Đây là giả thuyết cần kiểm nghiệm, chưa phải kết quả cải thiện đã xác nhận. Notebook tự ưu tiên preset `phone` đúng với RSS được chọn và đúng lựa chọn spatial auxiliary. So sánh cấu hình bằng validation; chỉ chạy một lần official test sau khi chốt cấu hình.
+Các preset phone-holdout là thí nghiệm riêng về khả năng tổng quát hóa sang thiết bị; chúng bật loss Euclid theo mét, tăng augmentation RSS, giảm Mixer còn một block, hạ learning rate Mixer và tăng weight decay. Run ngày 2026-10-21 đạt 8.152 m trên official test, kém hơn mốc trước đó khoảng 7.73 m; chưa có bằng chứng các thay đổi này cải thiện kết quả. Notebook hiện hỏi rõ cách chia validation UJI và mặc định tương thích baseline (`location`), không tự chọn phone-holdout chỉ vì preset đó tồn tại.
+
+Hai preset `configs/bsrbf_mixer_uji_baseline_spatial.json` và `configs/bsrbf_mixer_uji_baseline_no_spatial.json` giữ các tham số của run trước đó: 2 Mixer blocks, learning rate `3e-4`, weight decay `1e-5`, augmentation `0.18/0.07/0.10`, loss chuẩn hóa và validation theo vị trí. Spatial auxiliary lần lượt bật 8 cụm hoặc tắt. Chúng là baseline để tái lập/đối chứng, không phải tuyên bố đã đưa lỗi xuống dưới 6 m. Khi kiểm tra phone-holdout, giữ cùng các tham số còn lại và chỉ đổi validation split.
 
 ### 3. Notebook hợp nhất mã plugin
 
