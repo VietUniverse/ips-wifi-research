@@ -43,6 +43,7 @@ class KNNConfig:
     buildings: tuple = (0, 1, 2)
     seed: int = 42
     val_size: float = 0.15
+    validation_group: str = "location"
     k_max: int = 20
     k_ref: int = 13
     timing_repeats: int = 3
@@ -81,7 +82,8 @@ def build_blocks(train, test, cfg, builder, model_names):
     if cfg.max_test: test = test.sample(n=min(cfg.max_test, len(test)), random_state=cfg.seed).reset_index(drop=True)
     blocks = []
     for b in cfg.buildings:
-        d = builder(train, test, b, cfg.val_size, cfg.seed, cfg.preprocess, cfg.preprocess_params)
+        d = builder(train, test, b, cfg.val_size, cfg.seed, cfg.preprocess,
+                    cfg.preprocess_params, validation_group=cfg.validation_group)
         _xy_check(train, d.train_rows, d.y_train, f"tòa {b} train"); _xy_check(train, d.val_rows, d.y_val, f"tòa {b} val")
         _xy_check(test, d.test_rows, d.y_test, f"tòa {b} test")
         ref_floor = _floor_of(train, d.train_rows)
