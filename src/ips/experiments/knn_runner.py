@@ -12,12 +12,32 @@ import pandas as pd
 from ips.neighbors import available_models, build_model
 from ips.neighbors.formulas import Formulas
 
+BASE_MODELS = ("knn", "wknn_inv_d", "wknn_inv_d2")      # chạy khi chỉ chọn mục RF/HUIM, để báo cáo cũ vẫn đủ file
+
+
+def is_selector(name):
+    """Mục RF/HUIM (neighbors/rf.py, neighbors/huim.py) là bộ chọn WAP, không phải model định vị."""
+    return bool(getattr(build_model(name), "is_wap_selector", False))
+
+
+def split_models(cfg):
+    """(model gốc, bộ chọn WAP). Không chọn bộ chọn nào thì chạy đúng như trước khi có RF/HUIM."""
+    names = list(cfg.models)
+    if not names:
+        return [n for n in sorted(available_models()) if not is_selector(n)], []
+    selectors = [n for n in names if is_selector(n)]
+    base = [n for n in names if n not in selectors]
+    if selectors and not base:
+        base = [n for n in BASE_MODELS if n in available_models()]
+    return base, selectors
+
+
 HIDDEN = ("val_err", "test_err", "floor_ok", "preds", "test_rows", "test_building")
 
 
 @dataclass
 class KNNConfig:
-    models: tuple = ()                    # rỗng = tất cả model trong ips.neighbors
+    models: tuple = ()                    # rỗng = mọi model gốc trong ips.neighbors (không gồm các mục RF/HUIM)
     preprocess: str = "rss_powed"
     preprocess_params: dict = field(default_factory=dict)
     buildings: tuple = (0, 1, 2)
@@ -28,7 +48,7 @@ class KNNConfig:
     timing_repeats: int = 3
     max_train: int | None = None          # chỉ dùng cho smoke: lấy mẫu con
     max_test: int | None = None
-    wap_sweep: dict | None = None         # có khóa này thì chạy thêm luồng quét số WAP (Lần 6.5), xem knn_wap_sweep.py
+    wap_sweep: dict | None = None         # tùy chọn: ghi đè tham số quét tỉ lệ WAP của mục RF/HUIM (xem knn_wap_sweep.py)
 
 
 @dataclass
@@ -93,7 +113,7 @@ class Experiment:
 
     @classmethod
     def from_frames(cls, train, test, cfg, builder):
-        names = list(cfg.models) or sorted(available_models())
+        names = split_models(cfg)[0]
         return cls(build_blocks(train, test, cfg, builder, names), names, cfg.k_max, cfg.timing_repeats)
 
     def run(self, key, k):
@@ -143,16 +163,18 @@ def run(data_dir, output_dir, cfg, loader=None, builder=None):
     out.mkdir(parents=True, exist_ok=True)
     (out / "config.json").write_text(json.dumps(asdict(cfg), indent=2, default=list), encoding="utf-8")
     train, test = loader(data_dir)
+    base, selectors = split_models(cfg)
     exp = Experiment.from_frames(train, test, cfg, builder)
     cmp_ = Comparator(exp, cfg.k_ref)
     cmp_.run_all()
     files = cmp_.export(out)
     print("\nĐã lưu vào", out, ":", ", ".join(files))
-    if cfg.wap_sweep:
-        from .knn_wap_sweep import run_wap_sweep
+    for name in selectors:              # chỉ khi người dùng chọn mục RF/HUIM; kết quả chính ở trên đã lưu xong
+        from .knn_wap_sweep import run_selector
+        selector = build_model(name)
         try:
-            run_wap_sweep(train, test, cfg, out / "wap_sweep")
-        except Exception as error:      # kết quả chính đã lưu xong; lỗi ở đây không được làm mất chúng
+            run_selector(selector, train, test, cfg, base, out / selector.out_dir)
+        except Exception as error:      # lỗi ở đây không được làm mất kết quả chính
             import traceback
-            print(f"[m-sweep] LỖI, bỏ qua quét số WAP: {error}\n{traceback.format_exc()}")
+            print(f"[m-sweep] LỖI, bỏ qua {selector.display_name}: {error}\n{traceback.format_exc()}")
     return cmp_
