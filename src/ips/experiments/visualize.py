@@ -31,33 +31,31 @@ def _read(run_dir):
 def _models(config, predictions):
     if "models" in config:
         models = list(config["models"])
-        if not models:
-            models = [c.removesuffix("_error_m") for c in predictions if c.endswith("_error_m")]
+        available = [c.removesuffix("_error_m") for c in predictions
+                     if c.endswith("_error_m") and c != "error_m"]
+        matching = [model for model in models if f"{model}_error_m" in predictions]
+        if matching:
+            # A selector such as RF/HUIM is not a positioning estimator. The
+            # KNN runner records its base estimators in predictions.csv, so
+            # report the methods that actually produced predictions.
+            models = matching
+        elif available:
+            models = available
+        elif not models and "error_m" in predictions:
+            models = [config.get("model", "model")]
         return models
-    model = config["model"]
-    if config.get("with_mixer"):
-        model += "+mixer"
-        if config.get("mixer_arch") == "ap_token":
-            model += (f"[AP tokens; token={config.get('mixer_token_type', 'kan').upper()}, "
-                      f"channel={config.get('mixer_channel_type', 'kan').upper()}]")
-    return [model]
+    return [config["model"] + ("+mixer" if config.get("with_mixer") else "")]
 
 
 def _errors(config, predictions, model):
     if "models" in config:
-        model_column = f"{model}_error_m"
-        if model_column in predictions:
-            return predictions[model_column].to_numpy(float)
-        # Some single-model plugins (for example HUIM) use the standard
-        # per-run schema instead of prefixing every output column by model.
+        column = f"{model}_error_m"
+        if column in predictions:
+            return predictions[column].to_numpy(float)
         if len(config.get("models", [])) == 1 and "error_m" in predictions:
             return predictions["error_m"].to_numpy(float)
         available = [c for c in predictions if c.endswith("_error_m") or c == "error_m"]
-        raise KeyError(
-            f"Cannot find positioning error for {model!r}; expected "
-            f"{model_column!r} or a single-model 'error_m' column. "
-            f"Available error columns: {available}"
-        )
+        raise KeyError(f"Không tìm thấy cột sai số cho {model!r}; các cột hiện có: {available}")
     return predictions["error_m"].to_numpy(float)
 
 
@@ -77,12 +75,12 @@ def _table(config, buildings, predictions):
             summary_path, sweep_path = root / "summary.json", root / "sweep_by_k.csv"
             if summary_path.exists() and sweep_path.exists():
                 summary = json.loads(summary_path.read_text(encoding="utf-8"))
-                selected_k = summary.get("selected_k", {}).get(model)
-                if selected_k is not None:
+                selected = summary.get("selected_k", {}).get(model)
+                if selected is not None:
                     record = pd.read_csv(sweep_path)
-                    chosen = record[(record.method == model) & (record.k == selected_k)]
+                    chosen = record[(record.method == model) & (record.k == selected)]
                     if not chosen.empty:
-                        row["selected_k"] = int(selected_k)
+                        row["selected_k"] = int(selected)
                         if "t_predict_s" in chosen:
                             row["prediction_time_s"] = float(chosen.iloc[0]["t_predict_s"])
                         if "total_s" in chosen:
@@ -191,19 +189,6 @@ def render_run(run_dir, show=True):
             axes[1].set(xlabel="Logged epoch", ylabel="Validation mean error (m)", title="Validation error")
             for ax in axes: ax.grid(alpha=.25); ax.legend()
             paths.append(_save(fig, folder, "training_history.png"))
-
-    importance_files = sorted(root.glob("building_*/rf_ap_importance.csv"))
-    if importance_files:
-        fig, axes = plt.subplots(1, len(importance_files),
-                                 figsize=(max(7, 5 * len(importance_files)), 6),
-                                 squeeze=False)
-        for ax, path in zip(axes[0], importance_files):
-            importance = pd.read_csv(path).nlargest(20, "importance").sort_values("importance")
-            ax.barh(importance.feature, importance.importance, color=plt.cm.Set2(2))
-            ax.set(title=f"Top RSS APs | {path.parent.name}", xlabel="RF importance")
-            ax.grid(axis="x", alpha=.25)
-            ax.set_axisbelow(True)
-        paths.append(_save(fig, folder, "rf_ap_importance.png"))
 
     if show:
         from IPython.display import display, Image
