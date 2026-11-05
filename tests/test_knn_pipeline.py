@@ -92,7 +92,7 @@ class TestPipeline(unittest.TestCase):
     def test_selector_only_config_renders_the_base_models_it_actually_ran(self):
         import json
         import pandas as pd
-        from ips.experiments.visualize import render_run
+        from ips.experiments.knn_visualize import render_run
 
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
