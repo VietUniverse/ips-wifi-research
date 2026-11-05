@@ -1,0 +1,32 @@
+{
+  "model": "bsrbf_kan",
+  "preprocess": "rss_ap_robust",
+  "preprocess_params": {
+    "min_observations": 30,
+    "lower_quantile": 10,
+    "upper_quantile": 90,
+    "min_unique_values": 3,
+    "min_std_db": 1,
+    "mask_low_information": true
+  },
+  "buildings": [0, 1, 2],
+  "seed": 42,
+  "batch_size": 64,
+  "stage1_epochs": 30,
+  "stage2_epochs": 80,
+  "patience": 15,
+  "with_mixer": true,
+  "mixer_arch": "ap_token",
+  "mixer_epochs": 50,
+  "mixer_patience": 15,
+  "mixer_batch_size": 64,
+  "mixer_token_type": "mlp",
+  "mixer_channel_type": "mlp",
+  "mixer_isolate_rng": true,
+  "spatial_clusters": 8,
+  "spatial_aux_weight": 0.1,
+  "balance_locations": true,
+  "augment_gain_std": 0.18,
+  "augment_noise_std": 0.07,
+  "augment_dropout_prob": 0.1
+}

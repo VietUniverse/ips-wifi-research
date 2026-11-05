@@ -1,0 +1,16 @@
+{
+  "model": "kan",
+  "buildings": [0, 1, 2],
+  "seed": 42,
+  "batch_size": 64,
+  "stage1_epochs": 0,
+  "stage2_epochs": 80,
+  "patience": 15,
+  "with_mixer": true,
+  "mixer_epochs": 40,
+  "mixer_patience": 12,
+  "balance_locations": true,
+  "augment_gain_std": 0.18,
+  "augment_noise_std": 0.07,
+  "augment_dropout_prob": 0.1
+}
