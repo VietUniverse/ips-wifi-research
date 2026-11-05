@@ -49,10 +49,32 @@ Không bắt buộc: `python -m ips.experiments.knn_cli` chạy được ngay. `
 
 ## Quét số WAP (Lần 6.5)
 
-Preset `knn_smoke.json` và `knn_full.json` có khóa `wap_sweep`. Sau phần so sánh theo tòa, runner chạy thêm
-`src/ips/experiments/knn_wap_sweep.py`: xếp hạng WAP bằng Random Forest và Độ phủ chỉ trên train, giữ top-m
-(m = 200 → 300), rồi đưa từng m vào kNN, WKNN 1/d, WKNN 1/d² và quét k.
-Kết quả nằm trong thư mục `wap_sweep` của ZIP (`khao_sat_m_k.csv`, `tong_hop_theo_m.csv`, `chon_m.csv`,
-`bang_tung_m.csv`, `m_sweep.png`) và log `[m-sweep]` trong `console_log.txt`.
+Phần quét chạy khi `models` của preset có mục `rf` hoặc một trong hai mục HUIM; tham số tùy chọn đặt trong khóa
+`wap_sweep` (không bắt buộc). Sau phần so sánh theo tòa, runner chạy thêm
+`src/ips/experiments/knn_wap_sweep.py`: xếp hạng WAP bằng Random Forest (mục `rf`) hoặc khai phá tập mục lợi ích
+cao bằng UP-Growth (mục `huim_upgrowth`) / EFIM (mục `huim_efim`) chỉ trên train, giữ top-m (m = 10% → 90% số WAP),
+rồi đưa từng m vào kNN, WKNN 1/d, WKNN 1/d² và quét k.
+Kết quả nằm trong thư mục `wap_rf`, `wap_huim_upgrowth` hoặc `wap_huim_efim` của ZIP (`khao_sat_m_k.csv`,
+`tong_hop_theo_m.csv`, `chon_m.csv`, `bang_tung_m.csv`, `m_sweep.png`); riêng HUIM còn có `huim_thoi_gian.csv`,
+`huim_nhat_ky.csv`, `huim_top_itemset.csv`, `huim_diem_wap.csv`, `huim_thong_tin.json`. Log `[m-sweep]` nằm trong
+`console_log.txt`.
+
+### Hai mục HUIM
+
+- Chọn một mục: chỉ thuật toán đó chạy; thư mục của mục còn lại không được tạo. Thư viện `pami` được cài tự động
+  (`pip install pami`) ở lần chạy đầu.
+- Chọn cả hai: runner gom vào một lần khai phá chung, dùng cùng `min_util`; nếu một bên tràn RAM/quá thời gian thì
+  cả hai tăng ngưỡng và chỉ nhận khi cả hai cùng thành công. Mỗi thuật toán vẫn có thư mục kết quả đầy đủ, cộng thêm
+  `wap_huim_compare/`:
+  - `so_sanh_tong_hop.csv`: một dòng mỗi thuật toán (min_util, itemset, thời gian, RAM, m tốt nhất, sai số).
+  - `so_sanh_thoi_gian.csv` và `so_sanh_thoi_gian.png`: thời gian khai phá, xếp hạng, quét m, xuất file và RAM đỉnh.
+  - `so_sanh_min_util.csv`: từng lần leo ngưỡng của cả hai.
+  - `so_sanh_chon_m.csv`: m tốt nhất và sai số theo từng phương pháp kNN/WKNN.
+  - `so_sanh_thong_tin.json`: ngưỡng cuối, checksum/itemset, kết luận thuật toán nhanh hơn.
+- Tham số HUIM nằm trong `wap_sweep` (`min_util_ratio`, `escalate`, `max_tries`, `n_tx`, `scale`, `unit_profit`,
+  `time_limit_s`, `mem_fraction`). Khi chọn cả hai, ngưỡng và số lần thử lấy từ cấu hình chung để so sánh công bằng.
+- Trong `Colab_Train_UJI`, họ **KNN/WKNN** hiển thị nhãn thân thiện cho từng mục; chọn cả hai HUIM sẽ gom vào một
+  lần gọi `knn_cli` với thư mục `huim_upgrowth__huim_efim`.
+
 Giao thức khác phần so sánh theo tòa (tham chiếu toàn bộ train, tự vote tòa, k và m chọn trên validationData.csv)
 nên không so trực tiếp. Xóa khóa `wap_sweep` khỏi preset để tắt.

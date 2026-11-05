@@ -1,6 +1,6 @@
 """Quét tỉ lệ WAP (theo %) theo luồng Colab Lần 6.5/8; chỉ chạy khi người dùng chọn mục RF hoặc HUIM trong danh sách model.
 
-Thứ tự: (1) bộ chọn (neighbors/rf.py hoặc neighbors/huim.py) xếp hạng WAP chỉ bằng dữ liệu train
+Thứ tự: (1) bộ chọn (neighbors/rf.py, neighbors/huim_upgrowth.py, neighbors/huim_efim.py) xếp hạng WAP chỉ bằng dữ liệu train
         (2) với mỗi tỉ lệ p% (mặc định 10, 20, ..., 90): giữ top-m WAP, m = round(p% x số WAP); tìm 20 láng giềng một lần
         (3) đưa từng m vào các model gốc của ips.neighbors (kNN, WKNN 1/d, WKNN 1/d²) và quét k = 1..k_max
         (4) bảng từng m, bảng tổng hợp + Wilcoxon (Bonferroni) so với baseline dùng toàn bộ WAP, chọn m, biểu đồ.
@@ -8,7 +8,8 @@ Thứ tự: (1) bộ chọn (neighbors/rf.py hoặc neighbors/huim.py) xếp h�
 Giao thức theo Lần 6.5, KHÁC phần so sánh theo tòa của knn_runner: tham chiếu là TOÀN BỘ train, tự vote tòa -> tầng,
 đánh giá trên official test (validationData.csv), sai số chỉ tính trên mẫu đúng cả tòa lẫn tầng; k và m được chọn
 trên chính tập này nên kết quả hơi lạc quan (UJIIndoorLoc chỉ có train và validation). Kết quả nằm riêng trong
-thư mục của bộ chọn (wap_rf hoặc wap_huim), không thay thế bảng chính thức của runner.
+thư mục của bộ chọn (wap_rf, wap_huim_upgrowth, wap_huim_efim), không thay thế bảng chính thức của runner.
+Khi chọn cả hai mục HUIM, `run_huim_pair()` dùng chung min_util và ghi thêm thư mục wap_huim_compare.
 Tham số tùy chọn đặt trong khóa `wap_sweep` của preset (không bắt buộc; mặc định xem DEFAULTS và `defaults` của từng bộ chọn).
 """
 import json
@@ -276,16 +277,149 @@ class WapSweep:
         return ["khao_sat_m_k.csv", "tong_hop_theo_m.csv", "chon_m.csv", "bang_tung_m.csv", "thu_tu_wap.csv", "summary.json"] + extra_files + self.plot(out)
 
 
-def run_selector(selector, train, test, cfg, base_names, out_dir):
-    """Chạy trọn luồng cho một bộ chọn WAP (RF hoặc HUIM) và xuất file vào out_dir (thường là <run_dir>/wap_rf hoặc wap_huim)."""
+def run_selector(selector, train, test, cfg, base_names, out_dir, prepared=None, rank=None):
+    """Chạy trọn luồng cho một bộ chọn WAP và xuất file vào out_dir.
+
+    `prepared` và `rank` cho phép chế độ chọn cả hai HUIM tái dùng dữ liệu/kết quả khai phá
+    thay vì chuẩn bị lại hai lần.
+    """
     s = sweep_settings(cfg, selector)
-    Xtr, Xva, cols, ref, truth = prepare(train, test, cfg)
+    if prepared is None:
+        prepared = prepare(train, test, cfg)
+    Xtr, Xva, cols, ref, truth = prepared
     print(f"\n[m-sweep] {selector.display_name}: models={base_names}, RSS={cfg.preprocess}, N_WAP={Xtr.shape[1]}, "
           f"train={len(Xtr)}, eval={len(Xva)}, tỉ lệ WAP giữ lại = {s['percentages']}%")
-    rank = selector.rank(Xtr, ref, cols, s, cfg.seed)
-    sw = WapSweep(Xtr, Xva, ref, truth, base_names, s, cfg.k_max, rank.labels).run(rank.orders, rank.times)
+    if rank is None:
+        rank = selector.rank(Xtr, ref, cols, s, cfg.seed)
+    sw = WapSweep(Xtr, Xva, ref, truth, base_names, s, cfg.k_max, rank.labels)
+    t0 = time.perf_counter(); sw.run(rank.orders, rank.times); sw.t_run_s = time.perf_counter() - t0
     print(f"[m-sweep] Các mức m: {sw.m_list} | đã chạy {len(sw.sweep)} lần đánh giá | k chung K_FIX = {sw.k_fix}")
     sw.tables(); sw.summarize(); sw.select()
-    files = sw.export(Path(out_dir), rank.orders, rank.extras)
+    t0 = time.perf_counter(); files = sw.export(Path(out_dir), rank.orders, rank.extras); sw.t_export_s = time.perf_counter() - t0
     print(f"[m-sweep] Đã lưu vào {out_dir}: " + ", ".join(files))
     return sw
+
+
+def _best_selection(sw):
+    """Dòng chọn m tốt nhất của một bộ chọn, dùng cho bảng so sánh HUIM."""
+    sel = sw.sel
+    cand = sel[sel.best_err.notna()] if "best_err" in sel else sel.iloc[0:0]
+    if not len(cand):
+        return {}
+    r = cand.sort_values("best_err").iloc[0]
+    return dict(best_method=r.method, best_m=int(r.m_best) if pd.notna(r.m_best) else None,
+                best_mean_error=float(r.best_err), baseline_error=float(r.baseline_err),
+                best_d_err_pct=float(r.best_d_err_pct) if pd.notna(r.best_d_err_pct) else np.nan,
+                best_improved=bool(r.best_improved) if pd.notna(r.best_improved) else False)
+
+
+def export_huim_comparison(out, joint, sweeps):
+    """Ghi thư mục so sánh hai thuật toán HUIM, gồm bảng tổng hợp và so sánh thời gian."""
+    from ips.neighbors.huim import ALGORITHMS, DEFAULT_ORDER
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    algorithms = [alg for alg in DEFAULT_ORDER if alg in sweeps]
+    labels = {alg: ALGORITHMS[alg]["label"] for alg in algorithms}
+
+    timing_rows = []
+    for alg in algorithms:
+        res, sw = joint["results"][alg], sweeps[alg]
+        sweep_s, export_s = float(getattr(sw, "t_run_s", 0.0)), float(getattr(sw, "t_export_s", 0.0))
+        timing_rows.append(dict(
+            thuat_toan=labels[alg], thoi_gian_khai_pha_s=res["time"],
+            thoi_gian_wall_lan_cuoi_s=joint["walls"][alg],
+            tong_thoi_gian_xep_hang_s=joint["cumulative_walls"][alg],
+            thoi_gian_quet_m_s=sweep_s, thoi_gian_xuat_file_s=export_s,
+            tong_thoi_gian_s=joint["cumulative_walls"][alg] + sweep_s + export_s,
+            bo_nho_mb=res["mem"], so_itemset=res["n"], so_lan_thu=joint["n_attempts"],
+            min_util=joint["min_util"], ty_le_min_util=joint["min_util_ratio"],
+        ))
+    timing = pd.DataFrame(timing_rows)
+    timing.to_csv(out / "so_sanh_thoi_gian.csv", index=False)
+    joint["attempts"].to_csv(out / "so_sanh_min_util.csv", index=False)
+
+    chosen = []
+    for alg in algorithms:
+        sel = sweeps[alg].sel.copy(); sel.insert(0, "thuat_toan", labels[alg]); chosen.append(sel)
+    pd.concat(chosen, ignore_index=True).to_csv(out / "so_sanh_chon_m.csv", index=False)
+
+    summary_rows = []
+    for alg in algorithms:
+        res, sw, best = joint["results"][alg], sweeps[alg], _best_selection(sweeps[alg])
+        row = dict(thuat_toan=labels[alg], min_util=joint["min_util"], ty_le_min_util=joint["min_util_ratio"],
+                   n_transactions=joint["n_transactions"], so_itemset=res["n"], same_itemsets=joint["same_itemsets"],
+                   same_order=joint["same_order"], bo_nho_mb=res["mem"], so_lan_thu=joint["n_attempts"],
+                   k_fix=sw.k_fix, ket_luan=sw.verdict, thu_muc=ALGORITHMS[alg]["out_dir"])
+        row.update(timing[timing.thuat_toan == labels[alg]].iloc[0].to_dict())
+        row.update(best)
+        summary_rows.append(row)
+    summary = pd.DataFrame(summary_rows)
+    summary.to_csv(out / "so_sanh_tong_hop.csv", index=False)
+
+    fast = min(algorithms, key=lambda alg: float(joint["results"][alg]["time"]))
+    slow = max(algorithms, key=lambda alg: float(joint["results"][alg]["time"]))
+    tf, ts = float(joint["results"][fast]["time"]), float(joint["results"][slow]["time"])
+    speed = ts / max(tf, 1e-9)
+    same_text = ("Hai thuật toán cho cùng tập itemset và cùng thứ tự xếp hạng."
+                 if joint["same_itemsets"] and joint["same_order"] else
+                 "Hai thuật toán KHÁC tập itemset hoặc khác thứ tự xếp hạng; mỗi thư mục dùng kết quả riêng.")
+    info = dict(
+        min_util=joint["min_util"], ty_le_min_util=joint["min_util_ratio"],
+        n_transactions=joint["n_transactions"], n_attempts=joint["n_attempts"],
+        cung_min_util=True, same_itemsets=joint["same_itemsets"], same_order=joint["same_order"],
+        thuat_toan={alg: dict(nhan=labels[alg], thu_muc=ALGORITHMS[alg]["out_dir"],
+                              thoi_gian_khai_pha_s=float(joint["results"][alg]["time"]),
+                              thoi_gian_wall_lan_cuoi_s=float(joint["walls"][alg]),
+                              tong_thoi_gian_xep_hang_s=float(joint["cumulative_walls"][alg]),
+                              thoi_gian_quet_m_s=float(getattr(sweeps[alg], "t_run_s", 0.0)),
+                              thoi_gian_xuat_file_s=float(getattr(sweeps[alg], "t_export_s", 0.0)),
+                              bo_nho_mb=float(joint["results"][alg]["mem"]),
+                              so_itemset=int(joint["results"][alg]["n"]))
+                        for alg in algorithms},
+        ket_luan=f"{labels[fast]} nhanh hơn {labels[slow]} {speed:.2f} lần khi khai phá. {same_text}",
+    )
+    (out / "so_sanh_thong_tin.json").write_text(json.dumps(info, ensure_ascii=False, indent=2, default=float),
+                                                encoding="utf-8")
+    files = ["so_sanh_tong_hop.csv", "so_sanh_thoi_gian.csv", "so_sanh_min_util.csv", "so_sanh_chon_m.csv",
+             "so_sanh_thong_tin.json"]
+    try:
+        import matplotlib; matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig, axes = plt.subplots(1, 3, figsize=(14, 4.6))
+        names = timing.thuat_toan.tolist()
+        colors = [ALGORITHMS[alg]["color"] for alg in algorithms]
+        axes[0].bar(names, timing.thoi_gian_khai_pha_s, color=colors)
+        axes[0].set(title="Thời gian khai phá PAMI", ylabel="Giây")
+        axes[1].bar(names, timing.bo_nho_mb, color=colors)
+        axes[1].set(title="RAM đỉnh", ylabel="MB")
+        bottom = np.zeros(len(timing))
+        for col, label in (("tong_thoi_gian_xep_hang_s", "Xếp hạng"), ("thoi_gian_quet_m_s", "Quét m"),
+                           ("thoi_gian_xuat_file_s", "Xuất file")):
+            vals = timing[col].fillna(0).to_numpy(dtype=float)
+            axes[2].bar(names, vals, bottom=bottom, label=label); bottom += vals
+        axes[2].set(title="Tổng thời gian", ylabel="Giây"); axes[2].legend(fontsize=8)
+        for ax in axes: ax.grid(alpha=.3, axis="y")
+        fig.tight_layout(); fig.savefig(out / "so_sanh_thoi_gian.png", dpi=150); plt.close(fig)
+        files.append("so_sanh_thoi_gian.png")
+    except ImportError:
+        print("[m-sweep] Thiếu matplotlib nên bỏ qua biểu đồ so sánh HUIM.")
+    return files
+
+
+def run_huim_pair(selectors, train, test, cfg, base_names, out_dir):
+    """Chạy cả UP-Growth và EFIM ở cùng min_util, rồi xuất hai thư mục và thư mục so sánh."""
+    from ips.neighbors.huim import DEFAULT_ORDER, COMPARE_DIR, rank_joint
+    selectors = sorted(selectors, key=lambda x: DEFAULT_ORDER.index(x.algorithm))
+    s = sweep_settings(cfg, selectors[0])
+    prepared = prepare(train, test, cfg)
+    Xtr, Xva, cols, ref, truth = prepared
+    print(f"\n[m-sweep] HUIM cặp: chạy {', '.join(sel.display_name for sel in selectors)} ở cùng min_util")
+    joint = rank_joint(Xtr, cols, s, cfg.seed)
+    sweeps = {}
+    for selector in selectors:
+        sweeps[selector.algorithm] = run_selector(
+            selector, train, test, cfg, base_names, Path(out_dir) / selector.out_dir,
+            prepared=prepared, rank=joint["ranks"][selector.algorithm])
+    files = export_huim_comparison(Path(out_dir) / COMPARE_DIR, joint, sweeps)
+    print(f"[m-sweep] Đã lưu so sánh HUIM vào {Path(out_dir) / COMPARE_DIR}: " + ", ".join(files))
+    return sweeps

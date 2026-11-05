@@ -1,7 +1,7 @@
 """Vẽ biểu đồ cho kết quả họ kNN mà KHÔNG sửa ips.experiments.visualize (file dùng chung).
 
 Mục RF/HUIM là bộ chọn WAP: knn_runner chỉ ghi cột sai số của các estimator thật
-(knn, wknn_*), trong khi config.json vẫn ghi models=["huim"]. File này tạm thay hàm
+(knn, wknn_*), trong khi config.json vẫn ghi models=["huim_efim"] (hoặc mục HUIM đã chọn). File này tạm thay hàm
 `_models` của visualize trong lúc gọi, rồi trả lại nguyên trạng.
 """
 from contextlib import contextmanager

@@ -16,7 +16,7 @@ BASE_MODELS = ("knn", "wknn_inv_d", "wknn_inv_d2")      # chạy khi chỉ chọ
 
 
 def is_selector(name):
-    """Mục RF/HUIM (neighbors/rf.py, neighbors/huim.py) là bộ chọn WAP, không phải model định vị."""
+    """Mục RF/HUIM (neighbors/rf.py, huim_upgrowth.py, huim_efim.py) là bộ chọn WAP, không phải model định vị."""
     return bool(getattr(build_model(name), "is_wap_selector", False))
 
 
@@ -49,7 +49,7 @@ class KNNConfig:
     timing_repeats: int = 3
     max_train: int | None = None          # chỉ dùng cho smoke: lấy mẫu con
     max_test: int | None = None
-    wap_sweep: dict | None = None         # tùy chọn: ghi đè tham số quét tỉ lệ WAP của mục RF/HUIM (xem knn_wap_sweep.py)
+    wap_sweep: dict | None = None         # tùy chọn: ghi đè tham số quét tỉ lệ WAP của RF/2 mục HUIM (xem knn_wap_sweep.py)
 
 
 @dataclass
@@ -171,12 +171,22 @@ def run(data_dir, output_dir, cfg, loader=None, builder=None):
     cmp_.run_all()
     files = cmp_.export(out)
     print("\nĐã lưu vào", out, ":", ", ".join(files))
+    from .knn_wap_sweep import run_selector, run_huim_pair
+    huim = [n for n in selectors if getattr(build_model(n), "algorithm", None) in ("upgrowth", "efim")]
+    pair = len(huim) == 2
     for name in selectors:              # chỉ khi người dùng chọn mục RF/HUIM; kết quả chính ở trên đã lưu xong
-        from .knn_wap_sweep import run_selector
+        if pair and name in huim:
+            continue
         selector = build_model(name)
         try:
             run_selector(selector, train, test, cfg, base, out / selector.out_dir)
         except Exception as error:      # lỗi ở đây không được làm mất kết quả chính
             import traceback
             print(f"[m-sweep] LỖI, bỏ qua {selector.display_name}: {error}\n{traceback.format_exc()}")
+    if pair:                             # hai mục HUIM: một lần khai phá chung, hai thư mục + so sánh
+        try:
+            run_huim_pair([build_model(n) for n in huim], train, test, cfg, base, out)
+        except Exception as error:
+            import traceback
+            print(f"[m-sweep] LỖI, bỏ qua cặp HUIM: {error}\n{traceback.format_exc()}")
     return cmp_

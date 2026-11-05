@@ -98,7 +98,7 @@ class TestPipeline(unittest.TestCase):
             root = Path(temp)
             building = root / "building_0"
             building.mkdir()
-            (root / "config.json").write_text(json.dumps({"models": ["huim"]}), encoding="utf-8")
+            (root / "config.json").write_text(json.dumps({"models": ["huim_efim"]}), encoding="utf-8")
             (root / "summary.json").write_text(json.dumps({"selected_k": {"knn": 1}}), encoding="utf-8")
             pd.DataFrame({"building": [0], "test_mean_m": [1.0]}).to_csv(root / "by_building.csv", index=False)
             pd.DataFrame({"method": ["knn"], "k": [1], "t_predict_s": [0.01], "total_s": [0.02]}).to_csv(

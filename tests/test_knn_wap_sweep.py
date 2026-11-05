@@ -4,10 +4,12 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 import numpy as np
+import pandas as pd
 from ips.neighbors import available_models, build_model
 from ips.experiments.knn_runner import BASE_MODELS, KNNConfig, is_selector, run, split_models
-from ips.experiments.knn_wap_sweep import run_selector, sweep_settings
+from ips.experiments.knn_wap_sweep import RankResult, run_selector, sweep_settings
 from knn_stub import load_csvs, make_building_data, make_frames
 
 
@@ -37,8 +39,8 @@ def _cfg(model, **sweep):
 
 class TestSelectorRegistration(unittest.TestCase):
     def test_menu_lists_selectors_next_to_base_models(self):
-        self.assertTrue({"knn", "wknn_inv_d", "wknn_inv_d2", "rf", "huim"} <= set(available_models()))
-        self.assertTrue(is_selector("rf") and is_selector("huim"))
+        self.assertTrue({"knn", "wknn_inv_d", "wknn_inv_d2", "rf", "huim_upgrowth", "huim_efim"} <= set(available_models()))
+        self.assertTrue(is_selector("rf") and is_selector("huim_upgrowth") and is_selector("huim_efim"))
         self.assertFalse(any(is_selector(n) for n in BASE_MODELS))
 
     def test_default_run_has_no_selector(self):
@@ -48,7 +50,9 @@ class TestSelectorRegistration(unittest.TestCase):
 
     def test_selector_alone_falls_back_to_base_models(self):
         self.assertEqual(split_models(KNNConfig(models=("rf",))), (list(BASE_MODELS), ["rf"]))
-        self.assertEqual(split_models(KNNConfig(models=("huim", "knn"))), (["knn"], ["huim"]))
+        self.assertEqual(split_models(KNNConfig(models=("huim_efim", "knn"))), (["knn"], ["huim_efim"]))
+        self.assertEqual(split_models(KNNConfig(models=("huim_upgrowth", "huim_efim"))),
+                         (list(BASE_MODELS), ["huim_upgrowth", "huim_efim"]))
 
     def test_bad_settings_rejected(self):
         rf = build_model("rf")
@@ -75,19 +79,86 @@ class TestRunnerBehaviour(unittest.TestCase):
         out, log = self._run(_cfg("rf", n_trees=10))
         self.assertTrue((out / "sweep_by_k.csv").exists() and (out / "summary_table.csv").exists())
         self.assertTrue((out / "wap_rf" / "chon_m.csv").exists() and (out / "wap_rf" / "rf_importance.csv").exists())
-        self.assertFalse((out / "wap_huim").exists())
+        self.assertFalse((out / "wap_huim_upgrowth").exists())
+        self.assertFalse((out / "wap_huim_efim").exists())
+        self.assertFalse((out / "wap_huim_compare").exists())
         for line in log.splitlines():                              # không trùng dấu hiệu cắt kết luận của ô báo cáo notebook UJI
             if "[m-sweep]" in line: self.assertFalse(line.startswith("=" * 40) or line.startswith("Lưu ý"))
 
+    def test_both_huim_use_pair_mode_without_pami(self):
+        cfg = KNNConfig(models=("huim_upgrowth", "huim_efim"), buildings=(0, 1), k_max=6, k_ref=4,
+                        timing_repeats=1, wap_sweep=dict(percentages=[20, 40], n_rep=1, n_tx=50))
+        calls = []
+
+        def fake_joint(Xtr, cols, s, seed):
+            calls.append((Xtr.shape[1], tuple(s["percentages"]), seed))
+            order = np.arange(len(cols))
+            extras = {"huim_thong_tin.json": {"min_util": 10, "shared_threshold": True}}
+            ranks = {alg: RankResult({alg: order}, {alg: 0.1}, {alg: alg}, extras=extras)
+                     for alg in ("upgrowth", "efim")}
+            results = {alg: dict(time=0.1, mem=1.0, n=1) for alg in ranks}
+            walls = {"upgrowth": 0.2, "efim": 0.3}
+            return dict(ranks=ranks, attempts=pd.DataFrame(), results=results, walls=walls,
+                        cumulative_walls=dict(walls), n_attempts=1, min_util=10, min_util_ratio=0.01,
+                        n_transactions=Xtr.shape[0], same_itemsets=True, same_order=True)
+
+        with patch("ips.neighbors.huim.rank_joint", side_effect=fake_joint):
+            out, log = self._run(cfg)
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1], (20, 40))
+        up, ef, comp = out / "wap_huim_upgrowth", out / "wap_huim_efim", out / "wap_huim_compare"
+        self.assertTrue((up / "chon_m.csv").exists() and (ef / "chon_m.csv").exists())
+        for name in ("so_sanh_tong_hop.csv", "so_sanh_thoi_gian.csv", "so_sanh_min_util.csv",
+                     "so_sanh_chon_m.csv", "so_sanh_thong_tin.json"):
+            self.assertTrue((comp / name).exists(), name)
+        info_up = json.loads((up / "huim_thong_tin.json").read_text(encoding="utf-8"))
+        info_ef = json.loads((ef / "huim_thong_tin.json").read_text(encoding="utf-8"))
+        self.assertEqual(info_up["min_util"], info_ef["min_util"])
+        timing = pd.read_csv(comp / "so_sanh_thoi_gian.csv")
+        self.assertEqual(set(timing.thuat_toan), {"UP-Growth", "EFIM"})
+        self.assertIn("HUIM cặp", log)
+
     @unittest.skipUnless(_huim_available(), "cần thư viện pami")
-    def test_huim_entry_runs_both_algorithms(self):
-        out, _ = self._run(_cfg("huim", n_tx=600, time_limit_s=60), loader=_sparse_loader)
-        d = out / "wap_huim"
-        import pandas as pd
+    def test_huim_upgrowth_entry_creates_only_its_folder(self):
+        out, _ = self._run(_cfg("huim_upgrowth", n_tx=600, time_limit_s=60), loader=_sparse_loader)
+        d = out / "wap_huim_upgrowth"
         timing = pd.read_csv(d / "huim_thoi_gian.csv")
-        self.assertEqual(set(timing.thuat_toan), {"EFIM", "UP-Growth"})
-        self.assertTrue(json.loads((d / "huim_thong_tin.json").read_text(encoding="utf-8"))["same_itemsets"])
+        self.assertEqual(set(timing.thuat_toan), {"UP-Growth"})
         self.assertTrue((d / "chon_m.csv").exists())
+        self.assertFalse((out / "wap_huim_efim").exists())
+        self.assertFalse((out / "wap_huim_compare").exists())
+
+    @unittest.skipUnless(_huim_available(), "cần thư viện pami")
+    def test_huim_efim_entry_creates_only_its_folder(self):
+        out, _ = self._run(_cfg("huim_efim", n_tx=600, time_limit_s=60), loader=_sparse_loader)
+        d = out / "wap_huim_efim"
+        timing = pd.read_csv(d / "huim_thoi_gian.csv")
+        self.assertEqual(set(timing.thuat_toan), {"EFIM"})
+        self.assertTrue((d / "chon_m.csv").exists())
+        self.assertFalse((out / "wap_huim_upgrowth").exists())
+        self.assertFalse((out / "wap_huim_compare").exists())
+
+    @unittest.skipUnless(_huim_available(), "cần thư viện pami")
+    def test_both_huim_entries_share_threshold_and_create_comparison(self):
+        cfg = KNNConfig(models=("huim_upgrowth", "huim_efim"), buildings=(0, 1), k_max=6, k_ref=4,
+                        timing_repeats=1, wap_sweep=dict(percentages=[20, 40], n_rep=1, n_tx=600, time_limit_s=60))
+        out, _ = self._run(cfg, loader=_sparse_loader)
+        up, ef = out / "wap_huim_upgrowth", out / "wap_huim_efim"
+        comp = out / "wap_huim_compare"
+        self.assertTrue((up / "chon_m.csv").exists() and (ef / "chon_m.csv").exists())
+        for name in ("so_sanh_tong_hop.csv", "so_sanh_thoi_gian.csv", "so_sanh_min_util.csv",
+                     "so_sanh_chon_m.csv", "so_sanh_thong_tin.json"):
+            self.assertTrue((comp / name).exists(), name)
+        timing = pd.read_csv(comp / "so_sanh_thoi_gian.csv")
+        self.assertEqual(set(timing.thuat_toan), {"UP-Growth", "EFIM"})
+        self.assertTrue({"thoi_gian_khai_pha_s", "tong_thoi_gian_s", "bo_nho_mb"} <= set(timing.columns))
+        info_up = json.loads((up / "huim_thong_tin.json").read_text(encoding="utf-8"))
+        info_ef = json.loads((ef / "huim_thong_tin.json").read_text(encoding="utf-8"))
+        compare = json.loads((comp / "so_sanh_thong_tin.json").read_text(encoding="utf-8"))
+        self.assertEqual(info_up["min_util"], info_ef["min_util"])
+        self.assertEqual(info_up["min_util"], compare["min_util"])
+        self.assertTrue(compare["same_itemsets"])
 
 
 class TestSweepContent(unittest.TestCase):
