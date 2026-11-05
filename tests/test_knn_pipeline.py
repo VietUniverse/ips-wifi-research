@@ -44,8 +44,8 @@ class TestPipeline(unittest.TestCase):
             df = self.exp.sweep([m]); self.assertEqual(self.exp.best_k(m), int(df.loc[df.val_mean.idxmin(), "k"]))
 
     def test_bad_source_row_detected(self):
-        def bad(*a):
-            d = make_building_data(*a); d.val_rows = d.val_rows[::-1].copy(); return d
+        def bad(*a, **kw):
+            d = make_building_data(*a, **kw); d.val_rows = d.val_rows[::-1].copy(); return d
         tr, te = make_frames(300, 60)
         with redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
             Experiment.from_frames(tr, te, _cfg(), bad)
