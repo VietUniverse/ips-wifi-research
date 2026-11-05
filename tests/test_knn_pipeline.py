@@ -89,6 +89,28 @@ class TestPipeline(unittest.TestCase):
             self.assertTrue(any("timing" in p.name for p in many_figures))
             self.assertTrue(all(p.exists() for p in one_figures + many_figures + comparison_figures))
 
+    def test_selector_only_config_renders_the_base_models_it_actually_ran(self):
+        import json
+        import pandas as pd
+        from ips.experiments.visualize import render_run
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            building = root / "building_0"
+            building.mkdir()
+            (root / "config.json").write_text(json.dumps({"models": ["huim"]}), encoding="utf-8")
+            (root / "summary.json").write_text(json.dumps({"selected_k": {"knn": 1}}), encoding="utf-8")
+            pd.DataFrame({"building": [0], "test_mean_m": [1.0]}).to_csv(root / "by_building.csv", index=False)
+            pd.DataFrame({"method": ["knn"], "k": [1], "t_predict_s": [0.01], "total_s": [0.02]}).to_csv(
+                root / "sweep_by_k.csv", index=False)
+            pd.DataFrame({"building": [0, 0], "true_floor": [0, 1], "knn_pred_floor": [0, 1],
+                          "knn_error_m": [1.0, 2.0]}).to_csv(building / "predictions.csv", index=False)
+
+            report, figures = render_run(root, show=False)
+
+            self.assertEqual(report.model.tolist(), ["knn"])
+            self.assertTrue(any(path.name == "mean_error.png" for path in figures))
+
 
 if __name__ == "__main__":
     unittest.main()

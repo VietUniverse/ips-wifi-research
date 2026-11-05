@@ -31,15 +31,31 @@ def _read(run_dir):
 def _models(config, predictions):
     if "models" in config:
         models = list(config["models"])
-        if not models:
-            models = [c.removesuffix("_error_m") for c in predictions if c.endswith("_error_m")]
+        available = [c.removesuffix("_error_m") for c in predictions
+                     if c.endswith("_error_m") and c != "error_m"]
+        matching = [model for model in models if f"{model}_error_m" in predictions]
+        if matching:
+            # A selector such as RF/HUIM is not a positioning estimator. The
+            # KNN runner records its base estimators in predictions.csv, so
+            # report the methods that actually produced predictions.
+            models = matching
+        elif available:
+            models = available
+        elif not models and "error_m" in predictions:
+            models = [config.get("model", "model")]
         return models
     return [config["model"] + ("+mixer" if config.get("with_mixer") else "")]
 
 
 def _errors(config, predictions, model):
     if "models" in config:
-        return predictions[f"{model}_error_m"].to_numpy(float)
+        column = f"{model}_error_m"
+        if column in predictions:
+            return predictions[column].to_numpy(float)
+        if len(config.get("models", [])) == 1 and "error_m" in predictions:
+            return predictions["error_m"].to_numpy(float)
+        available = [c for c in predictions if c.endswith("_error_m") or c == "error_m"]
+        raise KeyError(f"Không tìm thấy cột sai số cho {model!r}; các cột hiện có: {available}")
     return predictions["error_m"].to_numpy(float)
 
 
@@ -50,17 +66,25 @@ def _table(config, buildings, predictions):
         row = {"model": model, "n_test": len(err), "mean_m": err.mean(),
                "median_m": np.median(err), "p90_m": np.quantile(err, .9),
                "within_5m_pct": 100 * np.mean(err <= 5)}
-        if "models" in config:
+        floor_column = f"{model}_pred_floor"
+        if "true_floor" in predictions and floor_column in predictions:
             row["floor_accuracy_pct"] = 100 * np.mean(
-                predictions[f"{model}_pred_floor"].to_numpy() == predictions["true_floor"].to_numpy())
+                predictions[floor_column].to_numpy() == predictions["true_floor"].to_numpy())
+        if "models" in config:
             root = Path(buildings.attrs["root"])
-            selected = json.loads((root / "summary.json").read_text(encoding="utf-8"))["selected_k"][model]
-            record = pd.read_csv(root / "sweep_by_k.csv")
-            chosen = record[(record.method == model) & (record.k == selected)]
-            if not chosen.empty:
-                row["selected_k"] = int(selected)
-                row["prediction_time_s"] = float(chosen.iloc[0]["t_predict_s"])
-                row["total_time_s"] = float(chosen.iloc[0]["total_s"])
+            summary_path, sweep_path = root / "summary.json", root / "sweep_by_k.csv"
+            if summary_path.exists() and sweep_path.exists():
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                selected = summary.get("selected_k", {}).get(model)
+                if selected is not None:
+                    record = pd.read_csv(sweep_path)
+                    chosen = record[(record.method == model) & (record.k == selected)]
+                    if not chosen.empty:
+                        row["selected_k"] = int(selected)
+                        if "t_predict_s" in chosen:
+                            row["prediction_time_s"] = float(chosen.iloc[0]["t_predict_s"])
+                        if "total_s" in chosen:
+                            row["total_time_s"] = float(chosen.iloc[0]["total_s"])
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -127,10 +151,11 @@ def render_run(run_dir, show=True):
     ax.grid(axis="y", alpha=.25); ax.legend()
     paths.append(_save(fig, folder, "by_building.png"))
 
-    if "true_floor" in pred:
+    floor_models = [m for m in models if f"{m}_pred_floor" in pred]
+    if "true_floor" in pred and floor_models:
         classes = sorted(set(pred.true_floor.astype(int)).union(*[
-            set(pred[f"{m}_pred_floor"].astype(int)) for m in models]))
-        for model in models:
+            set(pred[f"{m}_pred_floor"].astype(int)) for m in floor_models]))
+        for model in floor_models:
             fig, axes = plt.subplots(1, len(building_ids), figsize=(5 * len(building_ids), 4.5), squeeze=False)
             for ax, b in zip(axes[0], building_ids):
                 part = pred[pred.building == b]

@@ -28,7 +28,8 @@ def load_csvs(data_dir):
     return make_frames()
 
 
-def make_building_data(train, test, building, val_size, seed, preprocess, preprocess_params):
+def make_building_data(train, test, building, val_size, seed, preprocess, preprocess_params,
+                       validation_group="location"):
     tr, te = train[train.BUILDINGID == building], test[test.BUILDINGID == building]
     groups = tr.LONGITUDE.round(3).astype(str) + "_" + tr.LATITUDE.round(3).astype(str) + "_" + tr.FLOOR.astype(str)
     i_tr, i_va = next(GroupShuffleSplit(1, test_size=val_size, random_state=seed).split(tr, groups=groups))
