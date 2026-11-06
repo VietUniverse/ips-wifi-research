@@ -9,7 +9,13 @@ chọn cả hai, `rank_joint()` mới chạy cả hai ở cùng min_util để s
 giá trị powed x scale (làm tròn); lợi nhuận đơn vị = unit_profit. Điểm của WAP = tổng
 utility của các itemset chứa nó; WAP không thuộc itemset nào xếp tiếp theo utility riêng
 lẻ. Mỗi thuật toán chạy trong tiến trình con có giới hạn RAM/thời gian; nếu tràn thì
-min_util tự tăng và thử lại. Cần thư viện `pami` (tự pip install nếu chưa có)."""
+min_util tự tăng và thử lại. Cần thư viện `pami` (tự pip install nếu chưa có).
+
+Sửa lỗi (run 20261105): kết quả 0 itemset từng bị ghi là "OK", nên điểm mọi WAP = 0 và thứ tự WAP
+rơi về xếp theo utility riêng lẻ; UP-Growth và EFIM cho kết quả y hệt nhau mà HUIM chưa hề hoạt
+động. Nay 0 itemset (< min_itemsets) là trạng thái "rỗng" và KHÔNG được chấp nhận: khi min_util tăng
+tới mức rỗng, `_search_ratio` dò nhị phân giữa mức tràn RAM/quá giờ và mức rỗng; không có mức nào
+thỏa thì báo lỗi rõ ràng thay vì lặng lẽ xuất kết quả giả."""
 import json
 import os
 import subprocess
@@ -122,6 +128,10 @@ def _prepare_utility(Xtr, s, seed):
     rng = np.random.RandomState(seed)
     idx = np.arange(len(Xtr)) if not s["n_tx"] else np.sort(rng.choice(len(Xtr), min(s["n_tx"], len(Xtr)), replace=False))
     U = np.rint(Xtr[idx] * s["scale"]).astype(np.int64) * s["unit_profit"]       # utility từng WAP trong từng mẫu
+    q = s.get("max_items_per_tx")
+    if q and U.shape[1] > q:      # dữ liệu dày làm HUIM bùng nổ tổ hợp: chỉ giữ q WAP mạnh nhất mỗi giao dịch (hòa thì giữ cả)
+        thr = -np.partition(-U, q - 1, axis=1)[:, q - 1:q]
+        U = np.where(U >= np.maximum(thr, 1), U, 0)
     return U, U.sum(0).astype(float), n_wap
 
 
@@ -144,7 +154,7 @@ def _result(algorithm, res, single, cols, ratio, mu, log_df, wall, n_attempts, c
                         "utility": [u for u, _ in res["top"]]})
     info = dict(algorithm=algorithm, label=meta["label"], min_util_ratio_used=ratio, min_util=mu,
                 n_transactions=n_transactions, t_mine_s=res["time"], t_wall_s=wall, n_attempts=n_attempts,
-                cumulative_rank_wall_s=cumulative_wall, n_itemset=int(res["n"]),
+                cumulative_rank_wall_s=cumulative_wall, n_itemset=int(res["n"]), n_wap_co_diem=int((score > 0).sum()),
                 itemset_length_counts=res["lens"], checksum=int(res["checksum"]))
     if info_extra:
         info.update(info_extra)
@@ -153,44 +163,108 @@ def _result(algorithm, res, single, cols, ratio, mu, log_df, wall, n_attempts, c
                        "huim_top_itemset.csv": top, "huim_diem_wap.csv": table, "huim_thong_tin.json": info})
 
 
+def _state(res, s):
+    """'fail' = tràn RAM/quá giờ; 'empty' = chạy xong nhưng < min_itemsets itemset; 'ok' = dùng được."""
+    if res is None:
+        return "fail"
+    return "ok" if res["n"] >= s.get("min_itemsets", 1) else "empty"
+
+
+def _search_ratio(s, total, attempt):
+    """Tìm min_util vừa chạy được vừa cho đủ itemset. attempt(lần, tỉ_lệ, min_util) -> 'ok'|'fail'|'empty'.
+
+    Pha 1 (như cũ): tăng dần từ min_util_ratio, nhân `escalate` sau mỗi lần tràn RAM/quá giờ.
+    Pha 2 (mới): khi chạm mức 'rỗng' (min_util cao hơn mọi tập mục) thì dò nhị phân giữa mức 'fail'
+    gần nhất (quá nặng) và mức 'empty' (quá cao), tối đa max_bisect lần. Trả (tỉ_lệ, min_util, số_lần) hoặc None.
+    `min_util_ratio_fixed` chạy đúng một mức, để hai lần chạy riêng UP-Growth/EFIM so sánh được với nhau."""
+    fixed = s.get("min_util_ratio_fixed")
+    if fixed:
+        mu = int(fixed * total)
+        return (fixed, mu, 1) if attempt(1, fixed, mu) == "ok" else None
+    lo = hi = None
+    n = 0
+    for i in range(s["max_tries"]):
+        ratio = s["min_util_ratio"] * s["escalate"] ** i
+        n += 1
+        st = attempt(n, ratio, int(ratio * total))
+        if st == "ok":
+            return ratio, int(ratio * total), n
+        if st == "empty":
+            hi = ratio
+            break
+        lo = ratio
+    if hi is None:
+        return None
+    for _ in range(s.get("max_bisect", 4)):
+        if lo is not None and hi / lo < 1.02:
+            break
+        ratio = (lo * hi) ** 0.5 if lo is not None else hi / s["escalate"]
+        n += 1
+        st = attempt(n, ratio, int(ratio * total))
+        if st == "ok":
+            return ratio, int(ratio * total), n
+        if st == "empty":
+            hi = ratio
+        else:
+            lo = ratio
+    return None
+
+
+def _no_window_error(label, rows, s):
+    log = "; ".join(f"{r['ty_le_min_util']:.2%}: {r['trang_thai']}" for r in rows)
+    return RuntimeError(
+        f"HUIM {label}: không có min_util nào vừa khai phá được vừa cho >= {s.get('min_itemsets', 1)} itemset "
+        f"(thấp hơn thì tràn RAM/quá giờ, cao hơn thì rỗng) - dữ liệu quá dày. Thử: giảm n_tx (vd 2000), "
+        f"đặt max_items_per_tx (vd 8-10), tăng time_limit_s/mem_fraction hoặc max_tries/max_bisect trong khóa wap_sweep. "
+        f"Nhật ký: {log}")
+
+
 def rank_single(algorithm, Xtr, cols, s, seed):
-    """Chạy đúng một thuật toán, tự leo min_util khi thuật toán đó thất bại."""
+    """Chạy đúng một thuật toán; tự dò min_util, KHÔNG chấp nhận kết quả rỗng."""
     ensure_pami()
     U, single, n_wap = _prepare_utility(Xtr, s, seed)
     total, meta = int(U.sum()), ALGORITHMS[algorithm]
     mem_limit = int(s["mem_fraction"] * available_ram())
+    fixed = bool(s.get("min_util_ratio_fixed"))
     print(f"[m-sweep] HUIM {meta['label']}: {len(U)} giao dịch, {int((single > 0).sum())}/{n_wap} WAP có mặt, "
           f"tổng utility = {total:,}, giới hạn RAM mỗi lần khai phá = {mem_limit / 1e9:.1f} GB")
+    if not fixed:
+        print(f"[m-sweep] LƯU Ý: chạy riêng {meta['label']} nên min_util cuối có thể khác thuật toán kia; thời gian khai phá "
+              f"chỉ so sánh được khi cùng min_util (chọn cả hai mục HUIM, hoặc đặt cùng wap_sweep.min_util_ratio_fixed).")
     with tempfile.TemporaryDirectory() as work:
         (Path(work) / "huim_worker.py").write_text(WORKER_SRC)
         db = Path(work) / "huim_db.txt"
         print(f"[m-sweep] Đã ghi {write_db(db, U)} giao dịch")
-        rows, accepted, final = [], None, None
-        for i in range(s["max_tries"]):
-            ratio = s["min_util_ratio"] * s["escalate"] ** i; mu = int(ratio * total)
-            print(f"[m-sweep] HUIM {meta['label']} lần {i + 1}/{s['max_tries']}: min_util = {ratio:.2%} tổng = {mu:,}")
+        rows, box = [], {}
+
+        def attempt(n, ratio, mu):
+            print(f"[m-sweep] HUIM {meta['label']} lần {n}: min_util = {ratio:.2%} tổng = {mu:,}")
             res, why, wall = run_guarded(work, algorithm, db, mu, n_wap, mem_limit, s["time_limit_s"])
-            rows.append(dict(lan=i + 1, ty_le_min_util=ratio, min_util=mu, thuat_toan=meta["label"],
-                             trang_thai=why, thoi_gian_wall_s=wall,
-                             thoi_gian_khai_pha_s=(res["time"] if res is not None else np.nan),
-                             loi="" if res is not None else why))
+            st = _state(res, s)
+            if st == "empty":
+                why = f"rỗng: {res['n']} itemset (< {s.get('min_itemsets', 1)})"
+            rows.append(dict(lan=n, ty_le_min_util=ratio, min_util=mu, thuat_toan=meta["label"], trang_thai=why,
+                             thoi_gian_wall_s=wall, thoi_gian_khai_pha_s=(res["time"] if res is not None else np.nan),
+                             loi="" if st == "ok" else why))
             print(f"[m-sweep]    {meta['label']}: {why} ({wall:.1f}s)")
-            if res is not None:
-                accepted, final = res, (ratio, mu, wall, i + 1)
-                break
-        if accepted is None:
-            raise RuntimeError(f"HUIM {meta['label']} thất bại ở mọi min_util đã thử: giảm n_tx (vd 2000) "
-                               f"hoặc tăng min_util_ratio/max_tries trong khóa wap_sweep.")
-        ratio, mu, wall, n_attempts = final
+            if st == "ok":
+                box["acc"] = (res, wall)
+            return st
+
+        found = _search_ratio(s, total, attempt)
+        if found is None:
+            raise _no_window_error(meta["label"], rows, s)
+        ratio, mu, n_attempts = found
+        accepted, wall = box["acc"]
         log_df = pd.DataFrame(rows)
         print(f"[m-sweep] HUIM {meta['label']}: min_util cuối = {ratio:.2%} tổng = {mu:,} | {accepted['n']} itemset")
         return _result(algorithm, accepted, single, cols, ratio, mu, log_df, wall, n_attempts,
                        float(log_df.thoi_gian_wall_s.sum()),
-                       info_extra=dict(same_itemsets=None, shared_threshold=False), n_transactions=len(U))
+                       info_extra=dict(same_itemsets=None, shared_threshold=fixed), n_transactions=len(U))
 
 
 def rank_joint(Xtr, cols, s, seed):
-    """Chạy cả hai thuật toán ở cùng min_util; một bên lỗi thì cả hai cùng tăng."""
+    """Chạy cả hai thuật toán ở cùng min_util; một bên tràn/quá giờ/rỗng thì cả hai cùng đổi mức."""
     ensure_pami()
     U, single, n_wap = _prepare_utility(Xtr, s, seed)
     total = int(U.sum())
@@ -203,27 +277,31 @@ def rank_joint(Xtr, cols, s, seed):
         (Path(work) / "huim_worker.py").write_text(WORKER_SRC)
         db = Path(work) / "huim_db.txt"
         print(f"[m-sweep] Đã ghi {write_db(db, U)} giao dịch")
-        rows, accepted, final, final_walls, last_error = [], {}, None, {}, {}
-        for i in range(s["max_tries"]):
-            ratio = s["min_util_ratio"] * s["escalate"] ** i; mu = int(ratio * total)
-            print(f"[m-sweep] HUIM cặp lần {i + 1}/{s['max_tries']}: min_util = {ratio:.2%} tổng = {mu:,}")
-            got, walls = {}, {}
+        rows, box = [], {}
+
+        def attempt(n, ratio, mu):
+            print(f"[m-sweep] HUIM cặp lần {n}: min_util = {ratio:.2%} tổng = {mu:,}")
+            got, walls, states = {}, {}, {}
             for alg in DEFAULT_ORDER:
                 res, why, wall = run_guarded(work, alg, db, mu, n_wap, mem_limit, s["time_limit_s"])
-                got[alg], walls[alg], last_error[alg] = res, wall, why
-                rows.append(dict(lan=i + 1, ty_le_min_util=ratio, min_util=mu, thuat_toan=labels[alg],
-                                 trang_thai=why, thoi_gian_wall_s=wall,
-                                 thoi_gian_khai_pha_s=(res["time"] if res is not None else np.nan),
-                                 loi="" if res is not None else why))
+                got[alg], walls[alg], states[alg] = res, wall, _state(res, s)
+                if states[alg] == "empty":
+                    why = f"rỗng: {res['n']} itemset (< {s.get('min_itemsets', 1)})"
+                rows.append(dict(lan=n, ty_le_min_util=ratio, min_util=mu, thuat_toan=labels[alg], trang_thai=why,
+                                 thoi_gian_wall_s=wall, thoi_gian_khai_pha_s=(res["time"] if res is not None else np.nan),
+                                 loi="" if states[alg] == "ok" else why))
                 print(f"[m-sweep]    {labels[alg]}: {why} ({wall:.1f}s)")
-            if all(got[alg] is not None for alg in DEFAULT_ORDER):
-                accepted, final, final_walls = got, (ratio, mu, i + 1), walls
-                break
-        if len(accepted) < len(DEFAULT_ORDER):
-            detail = "; ".join(f"{labels[alg]}: {last_error.get(alg, 'chưa chạy')}" for alg in DEFAULT_ORDER)
-            raise RuntimeError(f"HUIM cặp thất bại ở mọi min_util đã thử ({detail}). Giảm n_tx (vd 2000) "
-                               f"hoặc tăng min_util_ratio/max_tries trong khóa wap_sweep.")
-        ratio, mu, n_attempts = final
+            vals = set(states.values())
+            st = "fail" if "fail" in vals else "empty" if "empty" in vals else "ok"
+            if st == "ok":
+                box["accepted"], box["walls"] = got, walls
+            return st
+
+        found = _search_ratio(s, total, attempt)
+        if found is None:
+            raise _no_window_error("cặp " + " + ".join(labels.values()), rows, s)
+        ratio, mu, n_attempts = found
+        accepted, final_walls = box["accepted"], box["walls"]
         log_df = pd.DataFrame(rows)
         up, ef = accepted["upgrowth"], accepted["efim"]
         same = up["n"] == ef["n"] and up["checksum"] == ef["checksum"]
@@ -250,7 +328,8 @@ class HUIMSelectorBase:
     is_wap_selector = True
     algorithm = None
     defaults = dict(scale=1000, unit_profit=1, min_util_ratio=0.005, escalate=1.5, max_tries=8, n_tx=5000,
-                    time_limit_s=600, mem_fraction=0.7)
+                    time_limit_s=600, mem_fraction=0.7,
+                    min_itemsets=1, max_bisect=4, min_util_ratio_fixed=None, max_items_per_tx=None)
 
     def rank(self, Xtr, ref, cols, s, seed):
         return rank_single(self.algorithm, Xtr, cols, s, seed)

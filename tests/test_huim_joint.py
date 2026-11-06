@@ -85,6 +85,75 @@ class TestHUIMJoint(unittest.TestCase):
         self.assertEqual(len(joint["attempts"]), 4)
 
 
+
+class TestHUIMEmptyResult(unittest.TestCase):
+    """Hồi quy run 20261105: 0 itemset từng bị ghi 'OK' nên điểm WAP = 0 và hai thuật toán cho kết quả y hệt."""
+    X = np.array([[1.0, 0.0, 2.0], [0.0, 1.0, 0.0], [1.0, 1.0, 1.0]])
+    cols = np.array(["a", "b", "c"])
+
+    def _run(self, fake, s=S, fn="single"):
+        with patch("ips.neighbors.huim.ensure_pami"), \
+             patch("ips.neighbors.huim.available_ram", return_value=10 ** 12), \
+             patch("ips.neighbors.huim.run_guarded", side_effect=fake), \
+             redirect_stdout(io.StringIO()):
+            if fn == "single":
+                return build_model("huim_efim").rank(self.X, None, self.cols, s, 42)
+            return rank_joint(self.X, self.cols, s, 42)
+
+    def test_empty_is_not_accepted_and_bisect_finds_nonempty(self):
+        calls = []
+
+        def fake(workdir, alg, db, mu, n_wap, mem_limit, time_limit):
+            calls.append(mu)                                     # tổng utility của X = 7000
+            if mu < 1000: return None, "tràn RAM", 0.1           # quá nặng
+            if mu > 1500: return _res(n_wap, n=0), "OK", 0.1     # quá cao: rỗng
+            return _res(n_wap, n=3), "OK", 0.1
+
+        s = dict(S, min_util_ratio=0.05, escalate=8.0, max_tries=3, max_bisect=6, n_tx=100)
+        result = self._run(fake, s)
+        info = result.extras["huim_thong_tin.json"]
+        self.assertGreater(info["n_itemset"], 0)
+        self.assertGreater(info["n_wap_co_diem"], 0)
+        log = result.extras["huim_nhat_ky.csv"]
+        self.assertTrue(any(str(t).startswith("rỗng") for t in log.trang_thai))
+        self.assertEqual(log.trang_thai.iloc[-1], "OK")
+
+    def test_only_empty_raises_instead_of_fake_ok(self):
+        def fake(workdir, alg, db, mu, n_wap, mem_limit, time_limit):
+            return _res(n_wap, n=0), "OK", 0.1
+
+        with self.assertRaises(RuntimeError) as cm:
+            self._run(fake)
+        self.assertIn("rỗng", str(cm.exception))
+
+    def test_joint_fail_on_one_and_empty_on_other_raises(self):
+        def fake(workdir, alg, db, mu, n_wap, mem_limit, time_limit):
+            if alg == "upgrowth": return None, "tràn RAM", 0.1
+            return _res(n_wap, n=0), "OK", 0.1
+
+        with self.assertRaises(RuntimeError):
+            self._run(fake, fn="joint")
+
+    def test_fixed_ratio_runs_once(self):
+        calls = []
+
+        def fake(workdir, alg, db, mu, n_wap, mem_limit, time_limit):
+            calls.append(mu)
+            return _res(n_wap, n=2), "OK", 0.1
+
+        result = self._run(fake, dict(S, min_util_ratio_fixed=0.03))
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(result.extras["huim_thong_tin.json"]["shared_threshold"])
+
+    def test_max_items_per_tx_keeps_strongest(self):
+        from ips.neighbors.huim import _prepare_utility
+        X = np.array([[0.5, 0.1, 0.9, 0.0], [0.2, 0.3, 0.4, 0.5]])
+        U, single, _ = _prepare_utility(X, dict(S, n_tx=0, max_items_per_tx=2), 0)
+        self.assertEqual((U > 0).sum(1).tolist(), [2, 2])
+        self.assertEqual(U[0, 2], 900)
+        self.assertEqual(U[0, 1], 0)
+
+
 class TestHUIMPairDispatch(unittest.TestCase):
     def test_pair_prepares_once_and_writes_both_folders_plus_comparison(self):
         selectors = [build_model("huim_upgrowth"), build_model("huim_efim")]
