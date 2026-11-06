@@ -260,7 +260,8 @@ def rank_single(algorithm, Xtr, cols, s, seed):
         print(f"[m-sweep] HUIM {meta['label']}: min_util cuối = {ratio:.2%} tổng = {mu:,} | {accepted['n']} itemset")
         return _result(algorithm, accepted, single, cols, ratio, mu, log_df, wall, n_attempts,
                        float(log_df.thoi_gian_wall_s.sum()),
-                       info_extra=dict(same_itemsets=None, shared_threshold=fixed), n_transactions=len(U))
+                       info_extra=dict(same_itemsets=None, shared_threshold=fixed,
+                                       max_items_per_tx=s.get("max_items_per_tx")), n_transactions=len(U))
 
 
 def rank_joint(Xtr, cols, s, seed):
@@ -312,11 +313,15 @@ def rank_joint(Xtr, cols, s, seed):
             log_alg = log_df[log_df.thuat_toan == labels[alg]].reset_index(drop=True)
             ranks[alg] = _result(alg, accepted[alg], single, cols, ratio, mu, log_alg, final_walls[alg], n_attempts,
                                  cumulative[alg], info_extra=dict(same_itemsets=bool(same), shared_threshold=True,
+                                                                  max_items_per_tx=s.get("max_items_per_tx"),
                                                                   other_algorithm=labels[other]), n_transactions=len(U))
         orders = {alg: ranks[alg].orders[alg] for alg in DEFAULT_ORDER}
         same_order = bool(np.array_equal(orders["upgrowth"], orders["efim"]))
         print(f"[m-sweep] HUIM cặp: min_util cuối = {ratio:.2%} tổng = {mu:,} | {up['n']} itemset | "
               f"UP-Growth và EFIM cho cùng tập itemset: {same} | cùng thứ tự: {same_order}")
+        if not same:
+            print("[m-sweep] CẢNH BÁO: UP-Growth và EFIM KHÁC tập itemset ở cùng min_util. Hai thuật toán chính xác phải cho "
+                  "cùng kết quả, nên đây là dấu hiệu sai cài đặt/dữ liệu; không dùng kết quả này để so sánh công bằng.")
         print(f"[m-sweep] HUIM cặp thời gian khai phá: UP-Growth {up['time']:.2f}s, EFIM {ef['time']:.2f}s")
         return dict(ranks=ranks, attempts=log_df, results=accepted, walls=final_walls, cumulative_walls=cumulative,
                     min_util_ratio=ratio, min_util=mu, n_transactions=len(U), same_itemsets=bool(same),
@@ -329,7 +334,8 @@ class HUIMSelectorBase:
     algorithm = None
     defaults = dict(scale=1000, unit_profit=1, min_util_ratio=0.005, escalate=1.5, max_tries=8, n_tx=5000,
                     time_limit_s=600, mem_fraction=0.7,
-                    min_itemsets=1, max_bisect=4, min_util_ratio_fixed=None, max_items_per_tx=None)
+                    min_itemsets=1, max_bisect=4, min_util_ratio_fixed=None,
+                    max_items_per_tx=10)   # 10 WAP mạnh nhất/giao dịch; đặt None để tắt (dữ liệu dày sẽ tràn RAM ở UP-Growth)
 
     def rank(self, Xtr, ref, cols, s, seed):
         return rank_single(self.algorithm, Xtr, cols, s, seed)

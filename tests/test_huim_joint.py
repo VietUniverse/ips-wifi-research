@@ -145,6 +145,16 @@ class TestHUIMEmptyResult(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(result.extras["huim_thong_tin.json"]["shared_threshold"])
 
+    def test_defaults_thin_transactions_and_info_records_it(self):
+        from ips.neighbors.huim import HUIMSelectorBase
+        self.assertEqual(HUIMSelectorBase.defaults["max_items_per_tx"], 10)
+
+        def fake(workdir, alg, db, mu, n_wap, mem_limit, time_limit):
+            return _res(n_wap, n=2), "OK", 0.1
+
+        result = self._run(fake, dict(S, max_items_per_tx=10))
+        self.assertEqual(result.extras["huim_thong_tin.json"]["max_items_per_tx"], 10)
+
     def test_max_items_per_tx_keeps_strongest(self):
         from ips.neighbors.huim import _prepare_utility
         X = np.array([[0.5, 0.1, 0.9, 0.0], [0.2, 0.3, 0.4, 0.5]])
